@@ -2,22 +2,10 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-// Orchestrates the 7-phase round loop. Boss/Card systems and manual-phase UI hook into
-// OnPhaseChanged, OnRoundChanged, OnActionLog, and CompleteManualPhase().
+// Orchestrates the 7-phase round loop: wires boss, cards, QR scanning, and dialogs
+// together and exposes events the UI reacts to. Game rules live in the collaborators.
 public class GameManager : MonoBehaviour
 {
-    [Serializable]
-    private class PhaseInstructions
-    {
-        [TextArea] public string planning = "The boss chooses its attack for this round.";
-        [TextArea] public string shield = "Restore the boss shields for this round.";
-        [TextArea] public string action = "Players may scan and play their action cards.";
-        [TextArea] public string attack = "Resolve the boss's planned attack.";
-        [TextArea] public string status = "Resolve active status effects.";
-        [TextArea] public string dropCards = "Discard any cards you do not want to keep.";
-        [TextArea] public string drawCards = "Draw cards for the next round.";
-    }
-
     [SerializeField] private int actionsPerPlayer = 3;
     [SerializeField] private List<Player> players = new List<Player>
     {
@@ -33,22 +21,21 @@ public class GameManager : MonoBehaviour
 
     private PhaseStateMachine _phaseStateMachine;
     private CardRegistry _cardRegistry;
-    private bool _resumeQrScanningWhenMessageCloses;
-    private readonly HashSet<DamageType> _attackTypesPlayedThisRound = new HashSet<DamageType>();
+    private CardEffectResolver _cardEffectResolver;
+    private readonly Queue<ProtectionCardEffect> _pendingProtections = new Queue<ProtectionCardEffect>();
+    private readonly Queue<ExtraTurnCardEffect> _pendingExtraTurns = new Queue<ExtraTurnCardEffect>();
+    private enum PlayerSelectionMode { None, ProtectionTarget, ExtraTurnTarget, StartPlayer }
+    private PlayerSelectionMode _selectionMode = PlayerSelectionMode.None;
+    private bool _isResolvingCard;
 
-    public bool HasActivePhasePopup { get; private set; }
-    public GamePhase ActivePopupPhase { get; private set; }
-    public string ActivePopupText { get; private set; }
-    public bool HasActiveMessagePopup { get; private set; }
-    public string ActiveMessageTitle { get; private set; }
-    public string ActiveMessageText { get; private set; }
+    public GameDialogs Dialogs { get; } = new GameDialogs();
 
     public event Action<GamePhase> OnPhaseChanged;
     public event Action<int> OnRoundChanged;
     public event Action<string> OnActionLog;
     public event Action<Player> OnPlayerActionPerformed;
-    public event Action<GamePhase, string> OnPhasePopupRequested;
-    public event Action<string, string> OnMessagePopupRequested;
+    public event Action<Player> OnCurrentPlayerChanged;
+    public event Action<DamageType> OnAttackEffectExecuted;
 
     public GamePhase CurrentPhase => _phaseStateMachine.CurrentPhase.PhaseId;
     public int Round => _phaseStateMachine.Round;
@@ -56,6 +43,9 @@ public class GameManager : MonoBehaviour
     public IReadOnlyList<Player> Players => players;
     public Player CurrentPlayer { get; private set; }
     public BossController Boss { get; private set; } = new BossController();
+
+    public bool WasAttackTypePlayedThisRound(DamageType type) =>
+        _cardEffectResolver != null && _cardEffectResolver.WasAttackTypePlayedThisRound(type);
 
     private void Awake()
     {
@@ -74,6 +64,11 @@ public class GameManager : MonoBehaviour
         else
             Debug.LogWarning("[GameManager] No BossData assigned; boss will remain uninitialized.");
 
+        Boss.SetPlayers(players);
+        _cardEffectResolver = new CardEffectResolver(Boss, Log, ShowMessagePopup, RequestProtectionTarget, RequestExtraTurnTarget);
+        _cardEffectResolver.OnAttackEffectExecuted += type => OnAttackEffectExecuted?.Invoke(type);
+        _cardEffectResolver.OnCardResolved += HandleCardResolved;
+
         Boss.OnHPChanged += (hp, maxHp) =>
         {
             Log($"Boss HP: {hp}/{maxHp}");
@@ -81,8 +76,8 @@ public class GameManager : MonoBehaviour
                 Log("Boss defeated! Game over.");
         };
         Boss.OnShieldDestroyed += type => Log($"Boss {type} shield destroyed!");
-        Boss.OnBossAttackPlanned += attack => Log($"Boss attacks with '{attack.name}': {attack.damage} damage" +
-            (attack.statusEffect != StatusEffectType.None ? $" + {attack.statusEffect}" : string.Empty));
+        Boss.OnBossAttackPlanned += attack => Log($"Boss plans '{attack.Name}' on Player {attack.Target.PlayerNumber}: {attack.Damage} damage" +
+            (attack.StatusEffect != StatusEffectType.None ? $" + {attack.StatusEffect}" : string.Empty));
         Boss.OnReactionTriggered += reaction => Log($"Boss reaction: players take {reaction.retaliationDamage} damage ({reaction.description})");
         Boss.OnHPTriggerFired += trigger => Log($"Boss HP trigger at {trigger.hpThreshold} HP: +{trigger.attackBonusDamage} attack damage ({trigger.description})");
         Boss.OnTimeTriggerFired += trigger => Log($"Boss time trigger (round {trigger.triggerOnRound}): players take {trigger.damageToAllPlayers} damage ({trigger.description})");
@@ -118,7 +113,7 @@ public class GameManager : MonoBehaviour
     private void HandlePhaseEntered(IGamePhase phase)
     {
         if (phase.PhaseId == GamePhase.Action)
-            _attackTypesPlayedThisRound.Clear();
+            _cardEffectResolver.ResetRound();
 
         switch (phase.PhaseId)
         {
@@ -152,7 +147,7 @@ public class GameManager : MonoBehaviour
 
     private void Update()
     {
-        if (!HasActiveMessagePopup)
+        if (!Dialogs.HasActiveMessagePopup)
             _phaseStateMachine.Tick(this);
     }
 
@@ -167,15 +162,12 @@ public class GameManager : MonoBehaviour
 
     public void ShowPhasePopup(GamePhase phase, string instructionText)
     {
-        HasActivePhasePopup = true;
-        ActivePopupPhase = phase;
-        ActivePopupText = instructionText;
-        OnPhasePopupRequested?.Invoke(phase, instructionText);
+        Dialogs.RequestPhasePopup(phase, instructionText);
     }
 
     public void DismissPhasePopup()
     {
-        HasActivePhasePopup = false;
+        Dialogs.DismissPhasePopup();
 
         if (CurrentPhase != GamePhase.Action)
             CompleteManualPhase();
@@ -183,43 +175,148 @@ public class GameManager : MonoBehaviour
 
     public void ShowMessagePopup(string title, string message)
     {
-        HasActiveMessagePopup = true;
-        ActiveMessageTitle = title;
-        ActiveMessageText = message;
-        OnMessagePopupRequested?.Invoke(title, message);
+        Dialogs.RequestMessage(title, message);
+        UpdateQrScanningState();
     }
 
     public void DismissMessagePopup()
     {
-        HasActiveMessagePopup = false;
+        Dialogs.DismissMessage();
 
-        if (_resumeQrScanningWhenMessageCloses && qrCodeReader != null)
+        bool startedSelection = false;
+        if (_pendingProtections.Count > 0)
         {
-            qrCodeReader.SetScanningEnabled(true);
-            _resumeQrScanningWhenMessageCloses = false;
+            _selectionMode = PlayerSelectionMode.ProtectionTarget;
+            Dialogs.BeginPlayerSelection();
+            startedSelection = true;
         }
+        else if (_pendingExtraTurns.Count > 0)
+        {
+            _selectionMode = PlayerSelectionMode.ExtraTurnTarget;
+            Dialogs.BeginPlayerSelection();
+            startedSelection = true;
+        }
+
+        // Non-selection effects resume the queue as soon as their popup closes;
+        // selection effects resume after the player picks a target.
+        if (!startedSelection)
+            _cardEffectResolver.CompleteInteraction(CurrentPlayer);
+
+        UpdateQrScanningState();
     }
 
     public void SetCurrentPlayer(Player player)
     {
+        if (CurrentPlayer == player)
+            return;
+
         CurrentPlayer = player;
+        OnCurrentPlayerChanged?.Invoke(player);
+    }
+
+    private void RequestProtectionTarget(ProtectionCardEffect effect)
+    {
+        _pendingProtections.Enqueue(effect);
+        Log($"Protection: select a player to reduce their boss attack by {effect.protection}.");
+    }
+
+    private void RequestExtraTurnTarget(ExtraTurnCardEffect effect)
+    {
+        _pendingExtraTurns.Enqueue(effect);
+        Log("Extra Turn: choose a player to take an immediate turn.");
+    }
+
+    public bool TrySelectProtectionTarget(Player target)
+    {
+        if (_pendingProtections.Count == 0 || target == null)
+            return false;
+
+        ProtectionCardEffect effect = _pendingProtections.Dequeue();
+        Dialogs.EndPlayerSelection();
+        _selectionMode = PlayerSelectionMode.None;
+        Boss.ReducePlayerAttackDamage(target, effect.protection);
+        Log($"Protection: Player {target.PlayerNumber}'s boss attack is reduced by {effect.protection}.");
+        _cardEffectResolver.CompleteInteraction(CurrentPlayer);
+        return true;
+    }
+
+    public bool TrySelectExtraTurnTarget(Player target)
+    {
+        if (_pendingExtraTurns.Count == 0 || target == null)
+            return false;
+
+        Player sourcePlayer = CurrentPlayer;
+        _pendingExtraTurns.Dequeue();
+        Dialogs.EndPlayerSelection();
+        _selectionMode = PlayerSelectionMode.None;
+        GrantInstantTurn(target, sourcePlayer);
+        // The source's extra-turn effect stays open until the interruption finishes;
+        // meanwhile the target may scan their card.
+        _isResolvingCard = false;
+        UpdateQrScanningState();
+        return true;
+    }
+
+    public void HandlePlayerPanelClicked(Player player)
+    {
+        switch (_selectionMode)
+        {
+            case PlayerSelectionMode.ProtectionTarget: TrySelectProtectionTarget(player); break;
+            case PlayerSelectionMode.ExtraTurnTarget: TrySelectExtraTurnTarget(player); break;
+            case PlayerSelectionMode.StartPlayer: TrySelectStartPlayer(player); break;
+        }
+    }
+
+    // Action phase entry: reset per-round card/selection state, then wait for a player
+    // panel click to choose the starting player.
+    public void BeginActionPhase(string startPlayerPrompt)
+    {
+        _isResolvingCard = false;
+        _pendingProtections.Clear();
+        _pendingExtraTurns.Clear();
+        _selectionMode = PlayerSelectionMode.StartPlayer;
+        Dialogs.IsStartPlayerSelectionActive = true;
+        ShowPhasePopup(GamePhase.Action, startPlayerPrompt);
+        Dialogs.BeginPlayerSelection();
+        UpdateQrScanningState();
+    }
+
+    private void TrySelectStartPlayer(Player player)
+    {
+        if (player == null)
+            return;
+
+        _selectionMode = PlayerSelectionMode.None;
+        Dialogs.IsStartPlayerSelectionActive = false;
+        Dialogs.EndPlayerSelection();
+        DismissPhasePopup();
+
+        if (_phaseStateMachine.CurrentPhase is ActionPhase actionPhase)
+            actionPhase.SetStartingPlayer(this, player);
+
+        // Re-arm the one-shot reader; the start-player notification consumed its scan window.
+        if (qrCodeReader != null)
+            qrCodeReader.SetScanningEnabled(true);
     }
 
     // Called once per scanned card (or a temporary "Use Action" button) to consume the current
     // player's action during the Action Phase and pass the turn to the next player.
     public void PerformPlayerAction()
     {
+        PerformPlayerAction(false);
+    }
+
+    public void PerformPlayerAction(bool grantExtraAction)
+    {
         if (_phaseStateMachine.CurrentPhase is ActionPhase actionPhase)
         {
             Player actingPlayer = CurrentPlayer;
-            actionPhase.PerformAction(this);
+            actionPhase.PerformAction(this, grantExtraAction);
             OnPlayerActionPerformed?.Invoke(actingPlayer);
         }
         else
             Log($"PerformPlayerAction() ignored: {CurrentPhase} is not the Action phase.");
     }
-
-    public Player CurrentActionPlayer => CurrentPlayer;
 
     // Resolves a QR ID into a card and plays it only while actions are available.
     public bool UseCardByQrId(string qrId)
@@ -227,6 +324,19 @@ public class GameManager : MonoBehaviour
         if (CurrentPhase != GamePhase.Action)
         {
             Log($"Card '{qrId}' ignored: cards can only be played during the Action phase.");
+            return false;
+        }
+
+        if (_isResolvingCard)
+        {
+            Log($"Card '{qrId}' ignored: a card is still resolving.");
+            return false;
+        }
+
+        // No active player until a start player is chosen; ignore scans until then.
+        if (CurrentPlayer == null)
+        {
+            Log($"Card '{qrId}' ignored: no active player yet.");
             return false;
         }
 
@@ -246,110 +356,45 @@ public class GameManager : MonoBehaviour
             return false;
         }
 
-        ResolveCardEffects(card);
-        PerformPlayerAction();
-        ShowPlayedCardPopup(card);
+        // Mark the card as resolving before Resolve: non-interactive cards fire
+        // OnCardResolved (-> HandleCardResolved) synchronously inside Resolve.
+        _isResolvingCard = true;
+        UpdateQrScanningState();
+
+        _cardEffectResolver.Resolve(CurrentPlayer, card);
         return true;
     }
 
-    private void ResolveCardEffects(CardData card)
+    private void HandleCardResolved(Player player)
     {
-        if (card.effects == null || card.effects.Count == 0)
+        // An interruption target's card finished: consume their action, return control to
+        // the source, and resume the source's paused card.
+        if (_phaseStateMachine.CurrentPhase is ActionPhase actionPhase && actionPhase.IsInterruptionActive)
         {
-            Log($"Card '{card.cardName}' has no effects configured.");
-            ShowMessagePopup("Card Cannot Be Played", $"'{card.cardName}' has no effects configured.");
+            actionPhase.CompleteInterruption(this);
+            _isResolvingCard = true;
+            _cardEffectResolver.CompleteInteraction(CurrentPlayer);
+            UpdateQrScanningState();
             return;
         }
 
-        foreach (CardEffect effect in card.effects)
-        {
-            switch (effect)
-            {
-                case AttackCardEffect attack:
-                    ResolveAttackEffect(attack);
-                    break;
-                case SupportCardEffect support:
-                    ResolveSupportEffect(support);
-                    break;
-                case ProtectionCardEffect protection:
-                    ResolveProtectionEffect(protection);
-                    break;
-                case LightningCardEffect lightning:
-                    ResolveLightningEffect(lightning);
-                    break;
-                case HealCardEffect heal:
-                    ResolveHealEffect(heal);
-                    break;
-                case DrawCardEffect draw:
-                    ResolveDrawEffect(draw);
-                    break;
-                case SpecialCardEffect special:
-                    ResolveSpecialEffect(special);
-                    break;
-                case null:
-                    Log($"Card '{card.cardName}' contains an empty effect entry.");
-                    break;
-            }
-        }
+        _isResolvingCard = false;
+        PerformPlayerAction(player.CardGrantedExtraAction);
+        UpdateQrScanningState();
     }
 
-    private void ResolveAttackEffect(AttackCardEffect effect)
-    {
-        Boss.TakeDamage(effect.damage, effect.damageType);
-        _attackTypesPlayedThisRound.Add(effect.damageType);
-        Log($"Player {CurrentPlayer.PlayerNumber} used a {effect.damageType} attack for {effect.damage} damage.");
-    }
-
-    private void ResolveSupportEffect(SupportCardEffect effect)
-    {
-        if (!_attackTypesPlayedThisRound.Contains(effect.damageType))
-        {
-            ShowMessagePopup("Support Cannot Be Used", $"A {effect.damageType} attack must be played earlier this round.");
-            return;
-        }
-
-        Boss.TakeDamage(effect.damage, effect.damageType);
-        Log($"Player {CurrentPlayer.PlayerNumber} used a {effect.damageType} support for {effect.damage} damage.");
-    }
-
-    private void ResolveProtectionEffect(ProtectionCardEffect effect)
-    {
-        Log($"Protection effect: choose a player to reduce their next boss attack by {effect.protection}.");
-    }
-
-    private void ResolveLightningEffect(LightningCardEffect effect)
-    {
-        CurrentPlayer.AddActions(effect.additionalActions);
-        Log($"Player {CurrentPlayer.PlayerNumber} gains {effect.additionalActions} additional action(s).");
-    }
-
-    private void ResolveHealEffect(HealCardEffect effect)
-    {
-        Log($"Heal effect: Player {CurrentPlayer.PlayerNumber} recovers {effect.healing} health.");
-    }
-
-    private void ResolveDrawEffect(DrawCardEffect effect)
-    {
-        Log($"Draw effect: Player {CurrentPlayer.PlayerNumber} draws {effect.cardsToDraw} card(s).");
-    }
-
-    private void ResolveSpecialEffect(SpecialCardEffect effect)
-    {
-        Log(string.IsNullOrWhiteSpace(effect.description) ? "Special effect resolved." : effect.description);
-    }
-
-    private void ShowPlayedCardPopup(CardData card)
+    private void UpdateQrScanningState()
     {
         if (qrCodeReader != null)
-        {
-            qrCodeReader.SetScanningEnabled(false);
-            _resumeQrScanningWhenMessageCloses = true;
-        }
+            qrCodeReader.SetScanningEnabled(!_isResolvingCard && !Dialogs.HasActiveMessagePopup);
+    }
 
-        string message = string.IsNullOrWhiteSpace(card.description)
-            ? $"{card.cardName} was played."
-            : card.description;
-        ShowMessagePopup(card.cardName, message);
+    private void GrantInstantTurn(Player target, Player sourcePlayer)
+    {
+        if (_phaseStateMachine.CurrentPhase is ActionPhase actionPhase)
+            actionPhase.BeginInterruption(this, target, sourcePlayer);
+        else
+            SetCurrentPlayer(target);
     }
 
     private bool CanCurrentPlayerUseCard(CardData card)

@@ -1,9 +1,10 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-// Very basic HUD: boss name, an HP bar, and 3 shield icons with their current values.
-// Uses PanelRenderer (the successor to UIDocument) and updates via BossController events.
+// HUD: boss HP + shields plus one runtime-built panel per player. Subscribes to
+// GameManager/Boss events and rebuilds lookups when PanelRenderer reloads its tree.
 [RequireComponent(typeof(PanelRenderer))]
 public class GameHUD : MonoBehaviour
 {
@@ -17,10 +18,13 @@ public class GameHUD : MonoBehaviour
     private Label _meleeShieldLabel;
     private Label _rangedShieldLabel;
     private Label _magicShieldLabel;
-    private Label _player1AttackLabel;
+    private VisualElement _meleeShieldIcon;
+    private VisualElement _rangedShieldIcon;
+    private VisualElement _magicShieldIcon;
+    private VisualElement _playerRow;
+    private readonly List<PlayerPanelView> _playerPanels = new List<PlayerPanelView>();
     private TextField _cardIdInput;
     private Button _playCardButton;
-    private Button _nextPhaseButton;
     private VisualElement _phasePopup;
     private Label _phasePopupTitle;
     private Label _phasePopupMessage;
@@ -29,13 +33,11 @@ public class GameHUD : MonoBehaviour
     private Label _messagePopupTitle;
     private Label _messagePopupText;
     private Button _closeMessagePopupButton;
-    private VisualElement[] _actionIndicators;
 
     private void Awake()
     {
         _panelRenderer = GetComponent<PanelRenderer>();
 
-        // Ensures the HUD renders even if no PanelSettings asset was assigned in the Inspector.
         if (_panelRenderer.panelSettings == null)
             _panelRenderer.panelSettings = ScriptableObject.CreateInstance<PanelSettings>();
 
@@ -53,8 +55,6 @@ public class GameHUD : MonoBehaviour
         _panelRenderer.UnregisterUIReloadCallback(OnUIReload);
     }
 
-    // PanelRenderer (re)builds its root VisualElement asynchronously, so element lookups happen here
-    // rather than in Awake. The version check avoids re-querying on duplicate reload notifications.
     private void OnUIReload(PanelRenderer panelRenderer, VisualElement root, int version)
     {
         if (_uiVersion == version)
@@ -67,10 +67,12 @@ public class GameHUD : MonoBehaviour
         _meleeShieldLabel = root.Q<Label>("melee-shield-label");
         _rangedShieldLabel = root.Q<Label>("ranged-shield-label");
         _magicShieldLabel = root.Q<Label>("magic-shield-label");
-        _player1AttackLabel = root.Q<Label>("player1-attack-label");
+        _meleeShieldIcon = root.Q<VisualElement>("melee-shield-icon");
+        _rangedShieldIcon = root.Q<VisualElement>("ranged-shield-icon");
+        _magicShieldIcon = root.Q<VisualElement>("magic-shield-icon");
+        _playerRow = root.Q<VisualElement>("player-row");
         _cardIdInput = root.Q<TextField>("card-id-input");
         _playCardButton = root.Q<Button>("play-card-button");
-        _nextPhaseButton = root.Q<Button>("next-phase-button");
         _phasePopup = root.Q<VisualElement>("phase-popup");
         _phasePopupTitle = root.Q<Label>("phase-popup-title");
         _phasePopupMessage = root.Q<Label>("phase-popup-message");
@@ -79,17 +81,9 @@ public class GameHUD : MonoBehaviour
         _messagePopupTitle = root.Q<Label>("message-popup-title");
         _messagePopupText = root.Q<Label>("message-popup-text");
         _closeMessagePopupButton = root.Q<Button>("close-message-popup-button");
-        _actionIndicators = new[]
-        {
-            root.Q<VisualElement>("action-indicator-1"),
-            root.Q<VisualElement>("action-indicator-2"),
-            root.Q<VisualElement>("action-indicator-3")
-        };
 
         if (_playCardButton != null)
             _playCardButton.clicked += PlayTestCard;
-        if (_nextPhaseButton != null)
-            _nextPhaseButton.clicked += AdvanceManualPhase;
         if (_closePhasePopupButton != null)
             _closePhasePopupButton.clicked += ClosePhasePopup;
         if (_closeMessagePopupButton != null)
@@ -97,18 +91,12 @@ public class GameHUD : MonoBehaviour
         if (_cardIdInput != null)
             _cardIdInput.RegisterCallback<KeyDownEvent>(HandleCardIdKeyDown);
 
-        if (gameManager != null && gameManager.HasActivePhasePopup)
-            ShowPhasePopup(gameManager.ActivePopupPhase, gameManager.ActivePopupText);
-        if (gameManager != null && gameManager.HasActiveMessagePopup)
-            ShowMessagePopup(gameManager.ActiveMessageTitle, gameManager.ActiveMessageText);
+        BuildPlayerPanels();
 
-        if (_bossNameLabel == null || _hpFill == null || _hpLabel == null
-            || _meleeShieldLabel == null || _rangedShieldLabel == null || _magicShieldLabel == null
-            || _player1AttackLabel == null)
-        {
-            Debug.LogError("[GameHUD] Could not find one or more BossHUD.uxml elements. " +
-                "Check that the PanelRenderer's Visual Tree Asset is set to BossHUD.");
-        }
+        if (gameManager != null && gameManager.Dialogs.HasActivePhasePopup)
+            ShowPhasePopup(gameManager.Dialogs.ActivePopupPhase, gameManager.Dialogs.ActivePopupText);
+        if (gameManager != null && gameManager.Dialogs.HasActiveMessagePopup)
+            ShowMessagePopup(gameManager.Dialogs.ActiveMessageTitle, gameManager.Dialogs.ActiveMessageText);
 
         RefreshAll();
     }
@@ -121,14 +109,17 @@ public class GameHUD : MonoBehaviour
         gameManager.Boss.OnHPChanged += HandleHPChanged;
         gameManager.Boss.OnShieldChanged += HandleShieldChanged;
         gameManager.Boss.OnBossAttackPlanned += HandleBossAttackPlanned;
+        gameManager.Boss.OnPlayerAttackDamageChanged += HandlePlayerAttackDamageChanged;
         gameManager.OnPlayerActionPerformed += HandlePlayerActionPerformed;
         gameManager.OnPhaseChanged += HandlePhaseChanged;
-        gameManager.OnPhasePopupRequested += ShowPhasePopup;
-        gameManager.OnMessagePopupRequested += ShowMessagePopup;
+        gameManager.Dialogs.OnPhasePopupRequested += ShowPhasePopup;
+        gameManager.Dialogs.OnPhasePopupDismissed += HidePhasePopup;
+        gameManager.Dialogs.OnMessagePopupRequested += ShowMessagePopup;
+        gameManager.Dialogs.OnPlayerSelectionChanged += SetPlayerPanelsSelectable;
+        gameManager.OnCurrentPlayerChanged += HandleCurrentPlayerChanged;
+        gameManager.OnAttackEffectExecuted += HandleAttackEffectExecuted;
         RefreshAll();
     }
-
-
 
     private void OnDisable()
     {
@@ -138,10 +129,49 @@ public class GameHUD : MonoBehaviour
         gameManager.Boss.OnHPChanged -= HandleHPChanged;
         gameManager.Boss.OnShieldChanged -= HandleShieldChanged;
         gameManager.Boss.OnBossAttackPlanned -= HandleBossAttackPlanned;
+        gameManager.Boss.OnPlayerAttackDamageChanged -= HandlePlayerAttackDamageChanged;
         gameManager.OnPlayerActionPerformed -= HandlePlayerActionPerformed;
         gameManager.OnPhaseChanged -= HandlePhaseChanged;
-        gameManager.OnPhasePopupRequested -= ShowPhasePopup;
-        gameManager.OnMessagePopupRequested -= ShowMessagePopup;
+        gameManager.Dialogs.OnPhasePopupRequested -= ShowPhasePopup;
+        gameManager.Dialogs.OnPhasePopupDismissed -= HidePhasePopup;
+        gameManager.Dialogs.OnMessagePopupRequested -= ShowMessagePopup;
+        gameManager.Dialogs.OnPlayerSelectionChanged -= SetPlayerPanelsSelectable;
+        gameManager.OnCurrentPlayerChanged -= HandleCurrentPlayerChanged;
+        gameManager.OnAttackEffectExecuted -= HandleAttackEffectExecuted;
+    }
+
+    private void BuildPlayerPanels()
+    {
+        foreach (PlayerPanelView panel in _playerPanels)
+            panel.OnClicked -= HandlePlayerPanelClicked;
+        _playerPanels.Clear();
+
+        if (_playerRow == null || gameManager == null)
+            return;
+
+        _playerRow.Clear();
+        foreach (Player player in gameManager.Players)
+        {
+            var panel = new PlayerPanelView(player);
+            panel.OnClicked += HandlePlayerPanelClicked;
+            player.OnActionsChanged += HandlePlayerActionsChanged;
+            _playerPanels.Add(panel);
+            _playerRow.Add(panel.Root);
+        }
+    }
+
+    private void HandlePlayerPanelClicked(Player player)
+    {
+        if (gameManager == null || !gameManager.Dialogs.IsSelectingPlayer)
+            return;
+
+        gameManager.HandlePlayerPanelClicked(player);
+    }
+
+    private void SetPlayerPanelsSelectable(bool selectable)
+    {
+        foreach (PlayerPanelView panel in _playerPanels)
+            panel.SetSelectable(selectable);
     }
 
     private void PlayTestCard()
@@ -153,12 +183,6 @@ public class GameHUD : MonoBehaviour
             _cardIdInput.value = string.Empty;
     }
 
-    private void AdvanceManualPhase()
-    {
-        if (gameManager != null)
-            gameManager.CompleteManualPhase();
-    }
-
     private void ShowPhasePopup(GamePhase phase, string instructionText)
     {
         if (_phasePopup == null || _phasePopupTitle == null || _phasePopupMessage == null)
@@ -167,6 +191,25 @@ public class GameHUD : MonoBehaviour
         _phasePopupTitle.text = phase.ToString();
         _phasePopupMessage.text = instructionText;
         _phasePopup.style.display = DisplayStyle.Flex;
+
+        // Start-player selection is a non-blocking notification: hide the dim/close and
+        // let clicks pass through to the player panels beneath.
+        bool isStartSelection = gameManager != null && gameManager.Dialogs.IsStartPlayerSelectionActive;
+        if (_closePhasePopupButton != null)
+            _closePhasePopupButton.style.display = isStartSelection ? DisplayStyle.None : DisplayStyle.Flex;
+        _phasePopup.EnableInClassList("phase-popup--notification", isStartSelection);
+        SetPickingThrough(_phasePopup, isStartSelection);
+    }
+
+    // Recursively disables pointer picking so the notification never intercepts clicks.
+    private void SetPickingThrough(VisualElement element, bool passThrough)
+    {
+        if (element == null)
+            return;
+
+        element.pickingMode = passThrough ? PickingMode.Ignore : PickingMode.Position;
+        foreach (VisualElement child in element.Children())
+            SetPickingThrough(child, passThrough);
     }
 
     private void ClosePhasePopup()
@@ -176,6 +219,12 @@ public class GameHUD : MonoBehaviour
 
         if (gameManager != null)
             gameManager.DismissPhasePopup();
+    }
+
+    private void HidePhasePopup()
+    {
+        if (_phasePopup != null)
+            _phasePopup.style.display = DisplayStyle.None;
     }
 
     private void ShowMessagePopup(string title, string message)
@@ -208,23 +257,52 @@ public class GameHUD : MonoBehaviour
 
     private void HandlePlayerActionPerformed(Player player)
     {
-        RefreshActionIndicators(player.ActionsRemaining);
+        GetPanel(player)?.SetActionsRemaining(player.ActionsRemaining);
+    }
+
+    private void HandlePlayerActionsChanged(Player player)
+    {
+        GetPanel(player)?.SetActionsRemaining(player.ActionsRemaining);
+    }
+
+    private void HandleCurrentPlayerChanged(Player player)
+    {
+        UpdateActivePlayerPanel();
     }
 
     private void HandlePhaseChanged(GamePhase phase)
     {
         if (phase == GamePhase.Action)
-            RefreshActionIndicators(gameManager.CurrentActionPlayer.ActionsRemaining);
+            RefreshAllPanels();
     }
-    private void HandleBossAttackPlanned(BossAttack attack)
-    {
-        Debug.Log($"[GameHUD] Boss planned attack: {attack.name} (Damage: {attack.damage}, StatusEffect: {attack.statusEffect})");
-        if (_player1AttackLabel == null)
-            return;
 
-        _player1AttackLabel.text = attack.damage.ToString() +
-            (attack.statusEffect != StatusEffectType.None ? $" + {attack.statusEffect}" : string.Empty);
+    private void HandleAttackEffectExecuted(DamageType type)
+    {
+        SetShieldHighlight(type, true);
     }
+
+    private void HandleBossAttackPlanned(PlannedBossAttack attack)
+    {
+        RefreshAttackDisplays();
+    }
+
+    private void HandlePlayerAttackDamageChanged(Player player, int damage)
+    {
+        RefreshAttackDisplays();
+    }
+
+    private void RefreshAttackDisplays()
+    {
+        BossController boss = gameManager.Boss;
+        foreach (PlayerPanelView panel in _playerPanels)
+        {
+            PlannedBossAttack attack = boss.GetPlannedAttack(panel.Player);
+            string text = attack == null ? "0" : attack.Damage.ToString() +
+                (attack.StatusEffect != StatusEffectType.None ? $" + {attack.StatusEffect}" : string.Empty);
+            panel.SetAttackText(text);
+        }
+    }
+
     private void HandleHPChanged(int hp, int maxHp)
     {
         if (_hpLabel == null)
@@ -255,22 +333,52 @@ public class GameHUD : MonoBehaviour
         HandleShieldChanged(DamageType.Melee, boss.MeleeShield);
         HandleShieldChanged(DamageType.Ranged, boss.RangedShield);
         HandleShieldChanged(DamageType.Magic, boss.MagicShield);
-
-        if (boss.PlannedAttacks.Count > 0)
-            HandleBossAttackPlanned(boss.PlannedAttacks[0]);
-
-        RefreshActionIndicators(gameManager.CurrentActionPlayer?.ActionsRemaining ?? 0);
+        RefreshShieldHighlights();
+        RefreshAllPanels();
+        UpdateActivePlayerPanel();
+        SetPlayerPanelsSelectable(gameManager.Dialogs.IsSelectingPlayer);
     }
 
-    private void RefreshActionIndicators(int actionsRemaining)
+    private void UpdateActivePlayerPanel()
     {
-        if (_actionIndicators == null)
-            return;
+        foreach (PlayerPanelView panel in _playerPanels)
+            panel.SetActive(panel.Player == gameManager.CurrentPlayer);
+    }
 
-        for (int i = 0; i < _actionIndicators.Length; i++)
+    private void RefreshAllPanels()
+    {
+        RefreshAttackDisplays();
+        foreach (PlayerPanelView panel in _playerPanels)
+            panel.SetActionsRemaining(panel.Player.ActionsRemaining);
+    }
+
+    private PlayerPanelView GetPanel(Player player)
+    {
+        foreach (PlayerPanelView panel in _playerPanels)
         {
-            if (_actionIndicators[i] != null)
-                _actionIndicators[i].style.display = i < actionsRemaining ? DisplayStyle.Flex : DisplayStyle.None;
+            if (panel.Player == player)
+                return panel;
         }
+        return null;
+    }
+
+    private void RefreshShieldHighlights()
+    {
+        SetShieldHighlight(DamageType.Melee, gameManager.WasAttackTypePlayedThisRound(DamageType.Melee));
+        SetShieldHighlight(DamageType.Ranged, gameManager.WasAttackTypePlayedThisRound(DamageType.Ranged));
+        SetShieldHighlight(DamageType.Magic, gameManager.WasAttackTypePlayedThisRound(DamageType.Magic));
+    }
+
+    private void SetShieldHighlight(DamageType type, bool isActive)
+    {
+        VisualElement icon = type switch
+        {
+            DamageType.Melee => _meleeShieldIcon,
+            DamageType.Ranged => _rangedShieldIcon,
+            DamageType.Magic => _magicShieldIcon,
+            _ => null
+        };
+
+        icon?.EnableInClassList("shield-icon--active", isActive);
     }
 }

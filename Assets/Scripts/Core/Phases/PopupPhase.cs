@@ -31,39 +31,3 @@ public abstract class PopupPhase : IGamePhase
         IsComplete = true;
     }
 }
-
-public sealed class PlanningPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.Planning;
-    public PlanningPhase(string instructionText) : base(instructionText) { }
-}
-
-public sealed class ShieldPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.Shield;
-    public ShieldPhase(string instructionText) : base(instructionText) { }
-}
-
-public sealed class AttackPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.Attack;
-    public AttackPhase(string instructionText) : base(instructionText) { }
-}
-
-public sealed class StatusPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.Status;
-    public StatusPhase(string instructionText) : base(instructionText) { }
-}
-
-public sealed class DropCardsPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.DropCards;
-    public DropCardsPhase(string instructionText) : base(instructionText) { }
-}
-
-public sealed class DrawCardsPhase : PopupPhase
-{
-    public override GamePhase PhaseId => GamePhase.DrawCards;
-    public DrawCardsPhase(string instructionText) : base(instructionText) { }
-}

@@ -20,7 +20,9 @@ MonoBehaviour:
     magic: 3
   attacks:
   - name: Attack1
-    damage: 5
+    target: 0
+    minDamage: 2
+    maxDamage: 5
     statusEffect: 1
     description: 
   reactions: []

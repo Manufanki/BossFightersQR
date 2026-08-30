@@ -1,83 +1,103 @@
-# Plan: Boss Fighter QR — Game Logic Foundation
+# Plan: Boss Fighter QR — Companion App for the Physical Board Game
 
-Build the game loop, boss system, and card system for a QR-code-driven board game companion. Uses a **state machine** for the 7-phase loop, **ScriptableObjects** for data-driven boss/card definitions, and **C# events** for reactive triggers. The existing `QRCodeReader` gets extended with an event that feeds into the game loop.
+## Overall Goal
+
+Build a **digital companion app** for the Boss Fighters QR board game. The app drives the fight: it runs the 7-phase round loop, plans and executes boss attacks, manages boss shields, resolves scanned cards via QR codes, and tells the players exactly what to do at each step. It deliberately does **not** track hero health points — per the official rules, hero HP lives on physical Health counters because too many effects modify it; the app only instructs players how to adjust their counters.
+
+The fight ends when the boss's life reaches 0 (players win) or any one hero's HP reaches 0 (players lose; handled physically, app only shows a defeat affordance).
 
 ---
 
-### Folder Structure
+## Core Design Decisions (from the rulebook)
+
+1. **7 phases per round, in order**: Planning → Shield → Action → Attack → Status → Discard → Draw.
+2. **Phase 2 (Shield) is skipped in round 1**; from round 2 on, the boss receives its shields.
+3. **Action phase**: players take turns clockwise, each with 3 actions (dots above their portrait). Round 1 starts with a player chosen by tapping their portrait (future UI work).
+4. **Every phase transition is confirmed** via an instruction popup (the rulebook's "check mark") — the app waits for acknowledgement before continuing. The Action phase popup only opens the phase; the phase ends when all actions are spent.
+5. **Cards have 1+ effects, resolved in order**: Attack (Melee/Ranged/Magic), Support (only works if an Attack of the same damage type was already played this round by any player), Protection (reduces a chosen hero's boss attack value), Lightning (take 1 additional action), Heal, Draw, and Special (free-text star effect).
+6. **Hero/Class gating**: a card may only be played by a player whose hero type and class type match the card; `All` is a wildcard. Rejected cards consume no action and do not pass the turn.
+7. **Hero HP, hand cards, draw/discard piles, and status tokens are physical**. The app displays instructions for them (e.g. "draw 2 cards", "gain 8 HP") instead of simulating them.
+8. **Boss abilities** come in 5 types: attacks, HP-threshold triggers, reactions to player actions, recurring (round-based) abilities, and shield effects. `BossData` models all five as serializable lists.
+9. **Shields absorb typed damage first**; overflow hits boss HP. Shields refill each Shield phase from round 2 onward.
+
+---
+
+## Architecture (current)
+
 ```
 Assets/Scripts/
-  Core/         GameManager, PhaseStateMachine, IGamePhase, enums
-  Core/Phases/  7 concrete phase classes
-  Boss/         BossData (SO), BossController (runtime)
-  Cards/        CardData (SO), CardRegistry (QR→card lookup)
-  UI/           GameUI (phase display, HP bar, shields, action log)
+  Core/
+    Enums.cs              GamePhase, DamageType, StatusEffectType, HeroType, ClassType
+    IGamePhase.cs         Phase contract: Enter/Tick/Exit/IsComplete
+    PhaseStateMachine.cs  Ordered phase cycle + round counter + events
+    GameDialogs.cs        Popup state (phase instructions + messages), survives UI reloads
+    Player.cs             Serializable player: number, hero type, class type, action budget
+    GameManager.cs        Orchestrator: wiring, phase side effects, card play, logging
+    Phases/
+      PopupPhase.cs       Base for acknowledgement-gated phases + 5 concrete phases
+      ActionPhase.cs      Round-robin turn order over GameManager's player roster
+  Boss/
+    BossData.cs           SO: HP, shields, attacks, reactions, HP/time/shield triggers
+    BossController.cs     Runtime boss state + TakeDamage + all trigger evaluation + events
+  Cards/
+    CardData.cs           SO: identity (name/description/qrId/hero/class) + ordered effects
+    CardEffects.cs        Serializable effect classes: Attack/Support/Protection/Lightning/Heal/Draw/Special
+    CardDatabase.cs       SO catalog of all CardData assets (Inspector-managed list)
+    CardRegistry.cs       Runtime qrId → CardData dictionary built from the database
+    CardEffectResolver.cs Resolves a card's effect list in order; one handler per effect type
+  UI/
+    GameHUD.cs            UI Toolkit HUD: boss HP/shields, planned attack, action dots,
+                          card test field, phase + message popups
+  QRCodeReader.cs         Webcam QR decoding (ZXing), dedup cooldown, toggleable preview/logs
+Assets/Editor/
+  CardDataEditor.cs       Custom CardData inspector: effect add/remove UI + QR scan-to-qrId
 Assets/Data/
-  Cards/        CardData .asset files
-  Bosses/       BossData .asset files
+  Cards/                  CardData .assets + CardDatabase.asset
+  Bosses/                 BossData .assets
 ```
 
----
-
-### Steps
-
-**Phase A — Enums & Data Layer** *(no dependencies)*
-
-1. Create `Enums.cs` — `GamePhase` (7 values), `DamageType` (Melee/Ranged/Magic), `StatusEffectType` (None/Poison), `HeroType`, `ClassType` as extensible placeholders
-2. Create `CardData.cs` (ScriptableObject) — `cardName`, `qrId`, `heroType`, `classType`, `damageType`, `damage`, `damageEnhancement`, `shield`
-3. Create `BossData.cs` (ScriptableObject) — `bossName`, `maxHP`, `initialShields` (per damage type), plus serializable lists for: `BossAttack` (damage, type, status effect), `BossReaction` (damage threshold → retaliation), `BossHPTrigger` (HP threshold → attack bonus), `BossTimeTrigger` (round → damage to all), `BossShieldTrigger` (shield type → damage on destroy)
-
-**Phase B — Game Loop State Machine** *depends on A*
-
-4. Create `IGamePhase` interface — `Enter()`, `Tick()`, `Exit()`, `IsComplete`
-5. Create 7 phase classes: `PlanningPhase` (boss picks attacks), `ShieldPhase` (assign shields), `ActionPhase` (QR scan active, manual end), `AttackPhase` (boss deals damage, auto), `StatusPhase` (tick effects, auto), `DropCardsPhase` (manual), `DrawCardsPhase` (manual)
-6. Create `GameManager` — owns `BossController`, `CardRegistry`, round counter, `AdvancePhase()` cycling; fires `OnPhaseChanged` and `OnActionLog` events; checks win condition after each phase
-
-**Phase C — Boss Runtime** *depends on A, parallel with D*
-
-7. Create `BossController` (plain C# class) — runtime state (currentHP, shields, attackBonus), `TakeDamage()` that reduces shields first then HP, evaluates reactions/HP triggers/shield triggers, fires events (`OnHPChanged`, `OnShieldDestroyed`, `OnBossAttack`)
-
-**Phase D — Card System & QR Integration** *depends on A, parallel with C*
-
-8. Create `CardRegistry` — maps `qrId` strings to `CardData` via dictionary
-9. Extend `QRCodeReader` — add `event Action<string> OnQRCodeScanned`, fire on decode with 2-second deduplication cooldown
-10. Wire together: `GameManager` subscribes to QR event → looks up card → if in Action Phase, calls `BossController.TakeDamage()` and logs the result
-
-**Phase E — Basic UI Toolkit** *depends on B, C*
-
-11. Create `GameUI` — UI Toolkit canvas with boss name, HP bar (slider + text), shield values per type, current phase label, round counter, scrollable action log, "Next Phase" button for manual phases
-12. Create `BossFight.unity` scene — Canvas + GameManager + QRCodeReader on single manager object
-
-**Phase F — Test Data & Verification** *depends on all*
-
-13. Create sample assets: 1 boss ("Goblin King", 50 HP, shields 5/3/4, 2 attacks, 1 reaction, 1 HP trigger, 1 time trigger, 1 shield trigger) + 3-4 test cards (melee/ranged/magic/shield)
-14. Generate QR codes for test card IDs and run through a full round cycle
+### Design patterns in use
+- **State machine** for the round loop (`IGamePhase` + `PhaseStateMachine`).
+- **Data-driven design** via ScriptableObjects (`BossData`, `CardData`, `CardDatabase`).
+- **C# events** for all reactive flows (boss triggers, phase changes, dialog requests, QR scans) — UI never polls game state.
+- **Service extraction (SOLID)**: `GameManager` orchestrates only; dialog state lives in `GameDialogs`, effect rules in `CardEffectResolver`, lookups in `CardRegistry`. New effect types require one data class + one handler method.
+- **Polymorphic serialized effects** via `[SerializeReference]`; the custom editor makes them authorable.
 
 ---
 
-### Relevant Files
-- `Assets/Scripts/QRCodeReader.cs` — add `OnQRCodeScanned` event + deduplication
-- `Assets/Scripts/Core/Enums.cs` — new, all shared enums
-- `Assets/Scripts/Core/IGamePhase.cs` — new, phase interface
-- `Assets/Scripts/Core/Phases/*.cs` — new, 7 phase classes
-- `Assets/Scripts/Core/GameManager.cs` — new, orchestrator
-- `Assets/Scripts/Boss/BossData.cs` — new, boss definition SO with nested serializable trigger classes
-- `Assets/Scripts/Boss/BossController.cs` — new, runtime boss logic + events
-- `Assets/Scripts/Cards/CardData.cs` — new, card definition SO
-- `Assets/Scripts/Cards/CardRegistry.cs` — new, QR→card lookup
-- `Assets/Scripts/UI/GameUI.cs` — new, HUD
+## Completed Milestones
 
-### Verification
-1. Play → phases cycle through all 7 and loop, round counter increments
-2. Scan test QR during Action Phase → boss takes correct shield/HP damage in UI + log
-3. Scan QR outside Action Phase → ignored with log
-4. Deal ≥ threshold damage → reaction retaliation logged
-5. Boss HP drops below threshold → attack bonus increases
-6. Reach trigger round → time-trigger damage logged
-7. Destroy a shield → shield-trigger damage logged
-8. Boss HP reaches 0 → game-over state
+- **A — Data layer**: enums, `CardData`, `BossData` with all five boss ability types.
+- **B — Game loop**: 7-phase state machine, concrete popup-gated phases, round counter.
+- **C — Boss runtime**: shields-first damage, reactions, HP/time/shield triggers, planned attacks.
+- **D — Cards & QR**: database + registry, QR event with 2 s dedup, scan-to-play wiring, hero/class eligibility, ordered multi-effect resolution (attack/support rules implemented).
+- **E — UI Toolkit**: HUD (HP bar, shields, planned attack), action dots, per-phase instruction popups with configurable text, generic message popup, manual phase button, QR test input.
+- **F — Tooling**: custom `CardData` inspector with typed effect list editing and scan-to-assign QR ID.
 
-### Further Considerations
-1. **Hero/Class enums** are left as placeholders — should I add specific values from your board game now, or leave extensible?
-2. **Boss attack targeting** is uniform ("all players"). Could later add a targeting enum for specific-player attacks.
-3. **Card combos** — currently one scan = one resolve. A "pending cards" buffer could enable multi-card combos later.
+---
+
+## Next Steps (mapped to the rulebook)
+
+1. **Player portraits row** — show all players, planned boss attack value per portrait, and per-player action dots; tap a portrait to pick the round's starting player.
+2. **Per-player boss attacks** — boss attacks currently target "all"; add targeting so Protection can reduce a specific portrait's attack value.
+3. **Protection target selection** — popup to choose the hero a Protection card shields.
+4. **Status phase resolution** — report poison damage per token (tokens stay physical); model poison-on-boss from cards like Poison Blade.
+5. **Discard/Draw phase instructions** — include hand-limit reminder text (hand limit = hero + class hand card values; needs those values on `Player`).
+6. **Round-1 special case** — skip Shield phase in round 1 per the rules.
+7. **Win/lose flow** — boss defeat screen; skull button for conceding when a hero drops to 0 HP.
+8. **Sample content** — full training-fight boss ("Goblin King" stand-in for The Prince) and starter card set with QR codes.
+
+### Explicitly out of scope (by design)
+- Hero HP tracking in-app (physical counters per the rulebook).
+- Hand/draw/discard pile simulation (physical cards; app only instructs).
+- Undo (rulebook: no undo button, it would interfere with boss mechanics).
+
+### Verification Checklist
+1. Phases cycle 1→7 and loop; each non-Action phase blocks until its popup is closed; round counter increments.
+2. Action popup dismisses without advancing; phase ends only when all players' actions are spent.
+3. Valid QR scan in Action phase → effects resolve in order, boss UI updates, description popup pauses scanning until OK.
+4. Support without prior matching attack → message popup, effect skipped.
+5. Wrong hero/class → rejection popup, no action spent, no player switch.
+6. QR scan outside Action phase → ignored with log.
+7. Reaction / HP / time / shield triggers each log and fire their events at the right moment.
+8. Boss HP reaches 0 → game-over state.

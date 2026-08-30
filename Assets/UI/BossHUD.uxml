@@ -1,38 +1,31 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
     <Style src="project://database/Assets/UI/BossHUD.uss?fileID=7433441132597879392&amp;guid=6e51c26690e6e834283eefcdbe408b06&amp;type=3#BossHUD"/>
-    <ui:VisualElement name="root" class="screen-root">
-        <ui:VisualElement class="hud-root">
-        <ui:Label name="boss-name" text="Boss Name" class="boss-name"/>
-        <ui:VisualElement name="hp-bar-bg" class="hp-bar-bg">
-            <ui:VisualElement name="hp-fill" class="hp-fill"/>
-            <ui:Label name="hp-label" text="0 / 0" class="hp-label"/>
+    <ui:VisualElement name="root" class="screen-root" style="flex-grow: 1;">
+        <ui:VisualElement name="boss-header" class="boss-header">
+            <ui:Label name="boss-name" text="Boss Name" class="boss-name"/>
+            <ui:VisualElement name="hp-bar-bg" class="hp-bar-bg">
+                <ui:VisualElement name="hp-fill" class="hp-fill"/>
+                <ui:Label name="hp-label" text="0 / 0" class="hp-label"/>
+            </ui:VisualElement>
         </ui:VisualElement>
         <ui:VisualElement name="shield-row" class="shield-row">
             <ui:VisualElement name="melee-shield-icon" class="shield-icon melee-icon">
                 <ui:Label name="melee-shield-label" text="0" class="shield-label"/>
+                <ui:Label text="Melee" class="shield-caption"/>
             </ui:VisualElement>
             <ui:VisualElement name="ranged-shield-icon" class="shield-icon ranged-icon">
                 <ui:Label name="ranged-shield-label" text="0" class="shield-label"/>
+                <ui:Label text="Ranged" class="shield-caption"/>
             </ui:VisualElement>
             <ui:VisualElement name="magic-shield-icon" class="shield-icon magic-icon">
                 <ui:Label name="magic-shield-label" text="0" class="shield-label"/>
+                <ui:Label text="Magic" class="shield-caption"/>
             </ui:VisualElement>
         </ui:VisualElement>
-        <ui:VisualElement name="attack-row">
-            <ui:VisualElement name="player1" class="shield-icon" style="background-color: rgb(63, 63, 63);">
-                <ui:Label name="player1-attack-label" text="0" class="shield-label"/>
-            </ui:VisualElement>
-        </ui:VisualElement>
-        <ui:VisualElement class="action-row">
-            <ui:VisualElement name="action-indicator-1" class="action-indicator"/>
-            <ui:VisualElement name="action-indicator-2" class="action-indicator"/>
-            <ui:VisualElement name="action-indicator-3" class="action-indicator"/>
-        </ui:VisualElement>
-        <ui:VisualElement class="card-test-row">
+        <ui:VisualElement name="player-row" class="player-row"/>
+        <ui:VisualElement name="card-test-row" class="card-test-row" style="display: none;">
             <ui:TextField name="card-id-input" label="Card ID" class="card-id-input"/>
             <ui:Button name="play-card-button" text="Play" class="play-card-button"/>
-        </ui:VisualElement>
-        <ui:Button name="next-phase-button" text="Next Phase" class="next-phase-button"/>
         </ui:VisualElement>
         <ui:VisualElement name="phase-popup" class="phase-popup">
             <ui:VisualElement class="phase-popup-content">

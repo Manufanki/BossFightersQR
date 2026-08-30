@@ -1,17 +1,21 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
-// Round-robin turn order for the Action Phase: each player takes one action, then play passes
-// to the next player. The phase completes once every player has used all of their actions.
+// Owns the Action phase playing order: round-robin turns, interruption turns granted by
+// extra-turn effects, and consuming player actions. The active player itself is tracked
+// by GameManager; this class only decides who plays next.
 public class ActionPhase : IGamePhase
 {
     private readonly int _actionsPerPlayer;
     private readonly string _instructionText;
+    private const string StartPlayerPrompt = "Choose a start player for this round.";
     private readonly IReadOnlyList<Player> _players;
-    private int _currentPlayerIndex;
+    private int _roundRobinIndex;
+    private Player _interruptionTarget;
+    private Player _interruptionSource;
 
     public GamePhase PhaseId => GamePhase.Action;
     public bool IsComplete { get; private set; }
-    private Player PhaseCurrentPlayer => _players[_currentPlayerIndex];
+    public bool IsInterruptionActive => _interruptionTarget != null;
 
     public ActionPhase(IReadOnlyList<Player> players, int actionsPerPlayer, string instructionText)
     {
@@ -26,14 +30,15 @@ public class ActionPhase : IGamePhase
     public void Enter(GameManager gameManager)
     {
         IsComplete = false;
-        _currentPlayerIndex = 0;
+        _roundRobinIndex = 0;
+        _interruptionTarget = null;
+        _interruptionSource = null;
 
         foreach (Player player in _players)
-            player.ResetActions(_actionsPerPlayer);
+            player.StartRound(_actionsPerPlayer);
 
-        gameManager.SetCurrentPlayer(PhaseCurrentPlayer);
-        gameManager.Log($"Entering phase: {PhaseId}. Player {PhaseCurrentPlayer.PlayerNumber}'s turn ({PhaseCurrentPlayer.ActionsRemaining} actions left).");
-        gameManager.ShowPhasePopup(PhaseId, _instructionText);
+        // Wait for the players to choose who starts; the notification closes on a panel click.
+        gameManager.BeginActionPhase(StartPlayerPrompt);
     }
 
     public void Tick(GameManager gameManager)
@@ -44,9 +49,13 @@ public class ActionPhase : IGamePhase
     {
     }
 
-    // Consumes one action for the current player, then passes the turn to the next player with
-    // actions remaining. Call this once per scanned card (or manual "Use Action" trigger).
     public void PerformAction(GameManager gameManager)
+    {
+        PerformAction(gameManager, false);
+    }
+
+    // Consumes one action; grantExtraAction keeps the turn on the current player (Lightning).
+    public void PerformAction(GameManager gameManager, bool grantExtraAction)
     {
         if (IsComplete)
             return;
@@ -55,11 +64,44 @@ public class ActionPhase : IGamePhase
         currentPlayer.UseAction();
         gameManager.Log($"Player {currentPlayer.PlayerNumber} used an action ({currentPlayer.ActionsRemaining} left).");
 
+        if (grantExtraAction && currentPlayer.HasActionsRemaining)
+        {
+            gameManager.Log($"Player {currentPlayer.PlayerNumber} takes an additional action ({currentPlayer.ActionsRemaining} left).");
+            return;
+        }
+
         AdvanceToNextPlayer(gameManager);
+    }
+
+    // Starts an interruption: the target gets one granted action and becomes active now.
+    // The round-robin position is untouched; play resumes after the source later.
+    public void BeginInterruption(GameManager gameManager, Player target, Player sourcePlayer)
+    {
+        _interruptionTarget = target;
+        _interruptionSource = sourcePlayer;
+        target.AddActions(1);
+        gameManager.SetCurrentPlayer(target);
+        gameManager.Log($"Player {target.PlayerNumber} takes an interruption turn.");
+    }
+
+    // Ends the interruption: consumes the target's granted action and returns control
+    // to the source player, whose card can then finish resolving.
+    public void CompleteInterruption(GameManager gameManager)
+    {
+        Player target = _interruptionTarget;
+        _interruptionTarget = null;
+        target.UseAction();
+        gameManager.Log($"Player {target.PlayerNumber} finished their interruption action.");
+        gameManager.SetCurrentPlayer(_interruptionSource);
     }
 
     private void AdvanceToNextPlayer(GameManager gameManager)
     {
+        // During an interruption hand-back, the next player is the one after the source.
+        int baseIndex = _interruptionSource != null ? IndexOf(_interruptionSource) : _roundRobinIndex;
+        if (_interruptionSource != null && gameManager.CurrentPlayer == _interruptionSource)
+            _interruptionSource = null;
+
         if (AllPlayersDone())
         {
             IsComplete = true;
@@ -67,14 +109,34 @@ public class ActionPhase : IGamePhase
             return;
         }
 
+        int next = baseIndex;
         do
         {
-            _currentPlayerIndex = (_currentPlayerIndex + 1) % _players.Count;
+            next = (next + 1) % _players.Count;
         }
-        while (!PhaseCurrentPlayer.HasActionsRemaining);
+        while (!_players[next].HasActionsRemaining);
 
-        gameManager.SetCurrentPlayer(PhaseCurrentPlayer);
-        gameManager.Log($"Player {PhaseCurrentPlayer.PlayerNumber}'s turn ({PhaseCurrentPlayer.ActionsRemaining} actions left).");
+        _roundRobinIndex = next;
+        gameManager.SetCurrentPlayer(_players[_roundRobinIndex]);
+        gameManager.Log($"Player {_players[_roundRobinIndex].PlayerNumber}'s turn ({_players[_roundRobinIndex].ActionsRemaining} actions left).");
+    }
+
+    private int IndexOf(Player player)
+    {
+        for (int i = 0; i < _players.Count; i++)
+        {
+            if (_players[i] == player)
+                return i;
+        }
+        return 0;
+    }
+
+    // Sets the player who starts the round (chosen by clicking their panel at phase start).
+    public void SetStartingPlayer(GameManager gameManager, Player player)
+    {
+        _roundRobinIndex = IndexOf(player);
+        gameManager.SetCurrentPlayer(player);
+        gameManager.Log($"Player {player.PlayerNumber} starts the round ({player.ActionsRemaining} actions left).");
     }
 
     private bool AllPlayersDone()

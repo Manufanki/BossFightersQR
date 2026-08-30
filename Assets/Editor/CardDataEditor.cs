@@ -12,6 +12,8 @@ public class CardDataEditor : Editor
         "Lightning",
         "Heal",
         "Draw",
+        "Remove Status",
+        "Extra Turn",
         "Special"
     };
 
@@ -38,6 +40,11 @@ public class CardDataEditor : Editor
         EditorGUILayout.Space();
         DrawEffectsList();
         serializedObject.ApplyModifiedProperties();
+
+        EditorGUILayout.Space();
+
+        if (GUILayout.Button("Rename Asset From Card"))
+            RenameAssetFromCard();
 
         EditorGUILayout.Space();
 
@@ -108,9 +115,34 @@ public class CardDataEditor : Editor
             case 3: return new LightningCardEffect();
             case 4: return new HealCardEffect();
             case 5: return new DrawCardEffect();
-            case 6: return new SpecialCardEffect();
+            case 6: return new RemoveStatusCardEffect();
+            case 7: return new ExtraTurnCardEffect();
+            case 8: return new SpecialCardEffect();
             default: throw new System.ArgumentOutOfRangeException(nameof(effectTypeIndex), effectTypeIndex, null);
         }
+    }
+
+    private void RenameAssetFromCard()
+    {
+        CardData card = (CardData)target;
+        string assetPath = AssetDatabase.GetAssetPath(card);
+        if (string.IsNullOrEmpty(assetPath))
+        {
+            Debug.LogWarning("[CardDataEditor] Card is not a saved asset; nothing to rename.");
+            return;
+        }
+
+        string baseName = string.IsNullOrWhiteSpace(card.cardName) ? "Card" : card.cardName;
+        string hero = card.heroType == HeroType.All ? null : card.heroType.ToString();
+        string className = card.classType == ClassType.All ? null : card.classType.ToString();
+
+        string combined = baseName;
+        if (hero != null) combined += " " + hero;
+        if (className != null) combined += " " + className;
+
+        string error = AssetDatabase.RenameAsset(assetPath, combined);
+        if (!string.IsNullOrEmpty(error))
+            Debug.LogWarning($"[CardDataEditor] Rename failed: {error}");
     }
 
     private void StartListening()

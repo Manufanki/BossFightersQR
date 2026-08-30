@@ -8,6 +8,7 @@ using UnityEngine;
 public class BossController
 {
     private BossData _data;
+    private IReadOnlyList<Player> _players = new List<Player>();
     private readonly HashSet<int> _firedHpThresholds = new HashSet<int>();
     private readonly HashSet<int> _firedTimeRounds = new HashSet<int>();
 
@@ -18,14 +19,15 @@ public class BossController
     public int RangedShield { get; private set; }
     public int MagicShield { get; private set; }
     public int AttackBonusDamage { get; private set; }
-    public List<BossAttack> PlannedAttacks { get; } = new List<BossAttack>();
+    public List<PlannedBossAttack> PlannedAttacks { get; } = new List<PlannedBossAttack>();
     public bool IsDefeated => CurrentHP <= 0;
 
     public event Action<int, int> OnHPChanged;
     public event Action<DamageType, int> OnShieldChanged;
     public event Action<DamageType> OnShieldDestroyed;
-    public event Action<BossAttack> OnBossAttackPlanned;
-    public event Action<BossAttack> OnBossAttackExecuted;
+    public event Action<PlannedBossAttack> OnBossAttackPlanned;
+    public event Action<PlannedBossAttack> OnBossAttackExecuted;
+    public event Action<Player, int> OnPlayerAttackDamageChanged;
     public event Action<BossReaction> OnReactionTriggered;
     public event Action<BossHPTrigger> OnHPTriggerFired;
     public event Action<BossTimeTrigger> OnTimeTriggerFired;
@@ -48,6 +50,11 @@ public class BossController
         OnHPChanged?.Invoke(CurrentHP, MaxHP);
     }
 
+    public void SetPlayers(IReadOnlyList<Player> players)
+    {
+        _players = players ?? new List<Player>();
+    }
+
     // Refills shields to the boss's configured starting values (called each Shield Phase).
     public void ResetShields()
     {
@@ -60,23 +67,65 @@ public class BossController
         OnShieldChanged?.Invoke(DamageType.Magic, MagicShield);
     }
 
-    // Picks one random attack for the round from BossData.attacks (called each Planning Phase).
+    // Plans one attack per player, each with its own rolled damage (called each Planning Phase).
     public void PlanAttacks()
     {
         PlannedAttacks.Clear();
 
-        if (_data.attacks == null || _data.attacks.Count == 0)
+        if (_data.attacks == null || _data.attacks.Count == 0 || _players.Count == 0)
             return;
 
         BossAttack chosen = _data.attacks[UnityEngine.Random.Range(0, _data.attacks.Count)];
-        PlannedAttacks.Add(chosen);
-        OnBossAttackPlanned?.Invoke(chosen); // Notify that the boss has planned this attack (for UI display).
+        foreach (Player target in ResolveTargets(chosen))
+        {
+            var planned = new PlannedBossAttack(chosen, target);
+            PlannedAttacks.Add(planned);
+            OnPlayerAttackDamageChanged?.Invoke(target, planned.Damage);
+        }
     }
 
-    // Fires OnBossAttack for each planned attack (called during Attack Phase).
+    private List<Player> ResolveTargets(BossAttack attack)
+    {
+        var targets = new List<Player>();
+        switch (attack.target)
+        {
+            case BossAttackTarget.SingleRandomPlayer:
+                targets.Add(_players[UnityEngine.Random.Range(0, _players.Count)]);
+                break;
+            case BossAttackTarget.AllPlayers:
+            case BossAttackTarget.EachPlayer:
+            default:
+                targets.AddRange(_players);
+                break;
+        }
+        return targets;
+    }
+
+    // Protection effects reduce the boss attack against the given hero (floored at 0).
+    public void ReducePlayerAttackDamage(Player target, int amount)
+    {
+        PlannedBossAttack attack = GetPlannedAttack(target);
+        if (attack == null || amount <= 0)
+            return;
+
+        attack.ReduceDamage(amount);
+        OnPlayerAttackDamageChanged?.Invoke(target, attack.Damage);
+    }
+
+    public PlannedBossAttack GetPlannedAttack(Player player)
+    {
+        foreach (PlannedBossAttack attack in PlannedAttacks)
+        {
+            if (attack.Target == player)
+                return attack;
+        }
+        return null;
+    }
+
+    // Fires OnBossAttackExecuted for each planned attack (called during Attack Phase).
     public void ExecutePlannedAttacks()
     {
-        foreach (BossAttack attack in PlannedAttacks)
+        foreach (PlannedBossAttack attack in PlannedAttacks)
         {
             OnBossAttackExecuted?.Invoke(attack);
         }

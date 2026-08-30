@@ -24,8 +24,7 @@ public class QRCodeReader : MonoBehaviour
     private float _lastDecodeTime;
     private int _decodeAttempts;
     private int _frameCount;
-    private string _lastScannedId;
-    private float _lastScanTime = float.NegativeInfinity;
+    private bool _waitingForScan = true;
 
     public event Action<string> OnQRCodeScanned;
     public bool IsScanningEnabled { get; private set; } = true;
@@ -96,7 +95,7 @@ public class QRCodeReader : MonoBehaviour
 
     private void Update()
     {
-        if (!IsScanningEnabled || _camTexture == null)
+        if (!IsScanningEnabled || !_waitingForScan || _camTexture == null)
             return;
 
         if (!_camTexture.isPlaying)
@@ -154,11 +153,8 @@ public class QRCodeReader : MonoBehaviour
 
         if (result != null)
         {
-            if (result.Text == _lastScannedId && Time.time - _lastScanTime < duplicateScanCooldown)
-                return;
-
-            _lastScannedId = result.Text;
-            _lastScanTime = Time.time;
+            // Report the code once, then wait until GameManager re-arms for the next scan.
+            _waitingForScan = false;
             Log($"QR Code found after {_decodeAttempts} attempt(s), frame {_frameCount}: {result.Text}");
             OnQRCodeScanned?.Invoke(result.Text);
         }
@@ -177,6 +173,8 @@ public class QRCodeReader : MonoBehaviour
     public void SetScanningEnabled(bool isEnabled)
     {
         IsScanningEnabled = isEnabled;
+        if (isEnabled)
+            _waitingForScan = true;
     }
 
     private void OnGUI()
