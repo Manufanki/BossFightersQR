@@ -27,7 +27,11 @@ MonoBehaviour:
       type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
       data:
         damageType: 0
-        damage: 0
+        damage:
+          mode: 0
+          constant: 4
+          min: 0
+          max: 0
     - rid: 8571227120829202605
       type: {class: SpecialCardEffect, ns: , asm: Assembly-CSharp}
       data:

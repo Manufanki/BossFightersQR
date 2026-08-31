@@ -399,17 +399,8 @@ MonoBehaviour:
   actionsPerPlayer: 3
   players:
   - playerNumber: 1
-    heroType: 1
-    classType: 4
-  - playerNumber: 2
-    heroType: 1
-    classType: 4
-  - playerNumber: 3
-    heroType: 1
-    classType: 4
-  - playerNumber: 4
-    heroType: 1
-    classType: 4
+    heroType: 0
+    classType: 0
   bossData: {fileID: 11400000, guid: e38c4c6526ee38a40ab03b86530fb13b, type: 2}
   cardDatabase: {fileID: 11400000, guid: f372b430d7db9ca47a7920b351733416, type: 2}
   qrCodeReader: {fileID: 689887619}

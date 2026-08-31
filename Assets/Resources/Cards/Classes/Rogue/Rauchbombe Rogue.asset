@@ -30,11 +30,13 @@ MonoBehaviour:
         protection:
           mode: 0
           constant: 2
+          min: 0
+          max: 0
         targetMode: 1
     - rid: 8571227120829202541
       type: {class: CleanseAttackCardEffect, ns: , asm: Assembly-CSharp}
       data:
-        targetMode: 1
+        targetMode: 4
     - rid: 8571227120829202542
       type: {class: LightningCardEffect, ns: , asm: Assembly-CSharp}
       data:

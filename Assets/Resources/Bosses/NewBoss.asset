@@ -25,19 +25,83 @@ MonoBehaviour:
     maxDamage: 5
     statusEffect: 1
     description: 
-  reactions:
-  - damageThreshold: 4
-    retaliationDamage: 1
-    description: 
-  hpTriggers:
-  - hpThreshold: 45
-    attackBonusDamage: 5
-    description: 
-  timeTriggers:
-  - triggerOnRound: 2
-    damageToAllPlayers: 2
-    description: 
-  shieldTriggers:
-  - shieldType: 0
-    damageOnDestroy: 6
-    description: 
+  modularTriggers:
+  - rid: 8571227123635191885
+  - rid: 8571227123635191887
+  - rid: 8571227123635191889
+  - rid: 8571227123635191891
+  references:
+    version: 2
+    RefIds:
+    - rid: 8571227123635191885
+      type: {class: BossRoundTrigger, ns: , asm: Assembly-CSharp}
+      data:
+        triggerName: New Trigger
+        popupText: every even round 100 damage
+        effects:
+        - rid: 8571227123635191886
+        timing: 1
+        specificRound: 1
+        fromRound: 1
+        phase: 0
+        oneShot: 0
+    - rid: 8571227123635191886
+      type: {class: BossAttackUpEffect, ns: , asm: Assembly-CSharp}
+      data:
+        amount:
+          mode: 0
+          constant: 100
+          min: 0
+          max: 0
+    - rid: 8571227123635191887
+      type: {class: BossHealthTrigger, ns: , asm: Assembly-CSharp}
+      data:
+        triggerName: New Trigger
+        popupText: 'Health trigger < 25 +5 '
+        effects:
+        - rid: 8571227123635191888
+        hpAtOrBelow: 25
+        phase: 4
+    - rid: 8571227123635191888
+      type: {class: BossHealEffect, ns: , asm: Assembly-CSharp}
+      data:
+        amount:
+          mode: 0
+          constant: 5
+          min: 0
+          max: 0
+    - rid: 8571227123635191889
+      type: {class: BossShieldBrokenTrigger, ns: , asm: Assembly-CSharp}
+      data:
+        triggerName: New Trigger
+        popupText: Shield Reaction = Round
+        effects:
+        - rid: 8571227123635191890
+        shieldType: 0
+    - rid: 8571227123635191890
+      type: {class: BossDamagePlayersEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damage:
+          mode: 1
+          constant: 0
+          min: 0
+          max: 0
+        hitAllPlayers: 1
+    - rid: 8571227123635191891
+      type: {class: BossHitReactionTrigger, ns: , asm: Assembly-CSharp}
+      data:
+        triggerName: New Trigger
+        popupText: Hit Reaction 3
+        effects:
+        - rid: 8571227123635191892
+        hitThreshold: 3
+        oneShot: 0
+    - rid: 8571227123635191892
+      type: {class: BossDamagePlayersEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damage:
+          mode: 0
+          constant: 3
+          min: 0
+          max: 0
+        hitAllPlayers: 0
