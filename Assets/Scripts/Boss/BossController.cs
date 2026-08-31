@@ -9,9 +9,8 @@ public class BossController
 {
     private BossData _data;
     private IReadOnlyList<Player> _players = new List<Player>();
-    private readonly HashSet<int> _firedHpThresholds = new HashSet<int>();
-    private readonly HashSet<int> _firedTimeRounds = new HashSet<int>();
 
+    public BossData Data => _data;
     public string BossName { get; private set; }
     public int CurrentHP { get; private set; }
     public int MaxHP { get; private set; }
@@ -30,10 +29,8 @@ public class BossController
     public event Action<PlannedBossAttack> OnBossAttackPlanned;
     public event Action<PlannedBossAttack> OnBossAttackExecuted;
     public event Action<Player, int> OnPlayerAttackDamageChanged;
-    public event Action<BossReaction> OnReactionTriggered;
-    public event Action<BossHPTrigger> OnHPTriggerFired;
-    public event Action<BossTimeTrigger> OnTimeTriggerFired;
-    public event Action<BossShieldTrigger> OnShieldTriggerFired;
+    // Fired for every hit taken, with the damage dealt (drives modular hit-threshold triggers).
+    public event Action<int> OnHitTaken;
 
     public void Initialize(BossData data)
     {
@@ -47,8 +44,6 @@ public class BossController
         AttackBonusDamage = 0;
         PoisonTokens = 0;
         PlannedAttacks.Clear();
-        _firedHpThresholds.Clear();
-        _firedTimeRounds.Clear();
 
         OnHPChanged?.Invoke(CurrentHP, MaxHP);
     }
@@ -64,6 +59,8 @@ public class BossController
         MeleeShield = _data.initialShields.melee;
         RangedShield = _data.initialShields.ranged;
         MagicShield = _data.initialShields.magic;
+        _disarmedShieldTriggers.Clear();
+        _poisonOnShieldBreak.Clear();
 
         OnShieldChanged?.Invoke(DamageType.Melee, MeleeShield);
         OnShieldChanged?.Invoke(DamageType.Ranged, RangedShield);
@@ -81,7 +78,7 @@ public class BossController
         BossAttack chosen = _data.attacks[UnityEngine.Random.Range(0, _data.attacks.Count)];
         foreach (Player target in ResolveTargets(chosen))
         {
-            var planned = new PlannedBossAttack(chosen, target);
+            var planned = new PlannedBossAttack(chosen, target, AttackBonusDamage);
             PlannedAttacks.Add(planned);
             OnPlayerAttackDamageChanged?.Invoke(target, planned.Damage);
         }
@@ -154,6 +151,42 @@ public class BossController
         OnPoisonTokensChanged?.Invoke(PoisonTokens);
     }
 
+    public void AddAttackBonus(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        AttackBonusDamage += amount;
+    }
+
+    public void IncreaseShield(DamageType type, int amount)
+    {
+        if (amount <= 0 || type == DamageType.True || type == DamageType.Poison || type == DamageType.None)
+            return;
+
+        int value = GetShield(type) + amount;
+        SetShield(type, value);
+        OnShieldChanged?.Invoke(type, value);
+    }
+
+    // Restores HP directly, capped at max HP.
+    public void Heal(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        CurrentHP = Mathf.Min(MaxHP, CurrentHP + amount);
+        OnHPChanged?.Invoke(CurrentHP, MaxHP);
+    }
+
+    public Player GetRandomPlayer()
+    {
+        if (_players == null || _players.Count == 0)
+            return null;
+
+        return _players[UnityEngine.Random.Range(0, _players.Count)];
+    }
+
     // Called each Status phase: every poison token deals 1 damage to the boss's HP.
     public void TickPoison()
     {
@@ -162,7 +195,6 @@ public class BossController
 
         CurrentHP = Mathf.Max(0, CurrentHP - PoisonTokens);
         OnHPChanged?.Invoke(CurrentHP, MaxHP);
-        EvaluateHPTriggers();
     }
 
     public int GetShield(DamageType type)
@@ -187,6 +219,52 @@ public class BossController
         }
     }
 
+    private readonly HashSet<DamageType> _disarmedShieldTriggers = new HashSet<DamageType>();
+    private readonly Dictionary<DamageType, int> _poisonOnShieldBreak = new Dictionary<DamageType, int>();
+
+    // Damages only the given shield (no HP overflow). Fires its destroy trigger unless disarmed.
+    public void DamageShield(DamageType type, int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        int shieldBefore = GetShield(type);
+        int shieldAfter = Mathf.Max(0, shieldBefore - amount);
+        SetShield(type, shieldAfter);
+        OnShieldChanged?.Invoke(type, shieldAfter);
+
+        if (shieldBefore > 0 && shieldAfter == 0)
+            HandleShieldDestroyed(type);
+    }
+
+    // Arms the shield: breaking it adds the given poison tokens once (consumed on break).
+    public void ArmShieldBreakPoison(DamageType type, int amount)
+    {
+        if (amount > 0)
+            _poisonOnShieldBreak[type] = amount;
+    }
+
+    // The next destruction of this shield fires no shield trigger (consumed on use).
+    public void DisarmShieldTrigger(DamageType type)
+    {
+        _disarmedShieldTriggers.Add(type);
+    }
+
+    private void HandleShieldDestroyed(DamageType type)
+    {
+        // Disarmed shields (Shield Strike suppress) do not raise the destroy event.
+        if (_disarmedShieldTriggers.Remove(type))
+            return;
+
+        OnShieldDestroyed?.Invoke(type);
+
+        if (_poisonOnShieldBreak.TryGetValue(type, out int poison))
+        {
+            _poisonOnShieldBreak.Remove(type);
+            AddPoisonTokens(poison);
+        }
+    }
+
     // Applies damage of the given type: shield absorbs first, any overflow hits HP.
     public void TakeDamage(int amount, DamageType type)
     {
@@ -198,8 +276,7 @@ public class BossController
         {
             CurrentHP = Mathf.Max(0, CurrentHP - amount);
             OnHPChanged?.Invoke(CurrentHP, MaxHP);
-            EvaluateHPTriggers();
-            EvaluateReactions(amount);
+            OnHitTaken?.Invoke(amount);
             return;
         }
 
@@ -207,7 +284,7 @@ public class BossController
         if (type == DamageType.Poison)
         {
             AddPoisonTokens(amount);
-            EvaluateReactions(amount);
+            OnHitTaken?.Invoke(amount);
             return;
         }
 
@@ -219,81 +296,14 @@ public class BossController
         OnShieldChanged?.Invoke(type, shieldAfter);
 
         if (shieldBefore > 0 && shieldAfter == 0)
-        {
-            OnShieldDestroyed?.Invoke(type);
-            EvaluateShieldTriggers(type);
-        }
+            HandleShieldDestroyed(type);
 
         if (overflow > 0)
         {
             CurrentHP = Mathf.Max(0, CurrentHP - overflow);
             OnHPChanged?.Invoke(CurrentHP, MaxHP);
-            EvaluateHPTriggers();
         }
 
-        EvaluateReactions(amount);
-    }
-
-    // Sums retaliation damage from reactions whose threshold this single hit met or exceeded.
-    private void EvaluateReactions(int damageDealt)
-    {
-        if (_data.reactions == null)
-            return;
-
-        foreach (BossReaction reaction in _data.reactions)
-        {
-            if (damageDealt >= reaction.damageThreshold)
-                OnReactionTriggered?.Invoke(reaction);
-        }
-    }
-
-    // Fires each HP trigger at most once, the first time CurrentHP drops to or below its threshold.
-    private void EvaluateHPTriggers()
-    {
-        if (_data.hpTriggers == null)
-            return;
-
-        for (int i = 0; i < _data.hpTriggers.Count; i++)
-        {
-            BossHPTrigger trigger = _data.hpTriggers[i];
-            if (_firedHpThresholds.Contains(i))
-                continue;
-
-            if (CurrentHP <= trigger.hpThreshold)
-            {
-                _firedHpThresholds.Add(i);
-                AttackBonusDamage += trigger.attackBonusDamage;
-                OnHPTriggerFired?.Invoke(trigger);
-            }
-        }
-    }
-
-    // Fires each time trigger at most once, the round it's configured for. Call at round-end.
-    public void EvaluateTimeTriggers(int currentRound)
-    {
-        if (_data.timeTriggers == null)
-            return;
-
-        foreach (BossTimeTrigger trigger in _data.timeTriggers)
-        {
-            int key = trigger.triggerOnRound;
-            if (trigger.triggerOnRound != currentRound || _firedTimeRounds.Contains(key))
-                continue;
-
-            _firedTimeRounds.Add(key);
-            OnTimeTriggerFired?.Invoke(trigger);
-        }
-    }
-
-    private void EvaluateShieldTriggers(DamageType destroyedType)
-    {
-        if (_data.shieldTriggers == null)
-            return;
-
-        foreach (BossShieldTrigger trigger in _data.shieldTriggers)
-        {
-            if (trigger.shieldType == destroyedType)
-                OnShieldTriggerFired?.Invoke(trigger);
-        }
+        OnHitTaken?.Invoke(amount);
     }
 }

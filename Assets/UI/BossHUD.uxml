@@ -7,6 +7,7 @@
                 <ui:VisualElement name="hp-fill" class="hp-fill"/>
                 <ui:Label name="hp-label" text="0 / 0" class="hp-label"/>
             </ui:VisualElement>
+            <ui:Label name="poison-label" text="Poison: 0" class="poison-label"/>
         </ui:VisualElement>
         <ui:VisualElement name="shield-row" class="shield-row">
             <ui:VisualElement name="melee-shield-icon" class="shield-icon melee-icon">

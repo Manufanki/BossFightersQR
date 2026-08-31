@@ -10,11 +10,11 @@ public class PlannedBossAttack
     public int Damage { get; private set; }
     public StatusEffectType StatusEffect { get; private set; }
 
-    public PlannedBossAttack(BossAttack source, Player target)
+    public PlannedBossAttack(BossAttack source, Player target, int bonusDamage = 0)
     {
         _source = source;
         Target = target;
-        Damage = UnityEngine.Random.Range(source.minDamage, source.maxDamage + 1);
+        Damage = UnityEngine.Random.Range(source.minDamage, source.maxDamage + 1) + bonusDamage;
         StatusEffect = source.statusEffect;
     }
 

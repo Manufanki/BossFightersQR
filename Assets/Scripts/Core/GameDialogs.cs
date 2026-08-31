@@ -12,12 +12,14 @@ public class GameDialogs
     public string ActiveMessageTitle { get; private set; }
     public string ActiveMessageText { get; private set; }
     public bool IsSelectingPlayer { get; private set; }
+    public bool IsSelectingShield { get; private set; }
     public bool IsStartPlayerSelectionActive { get; set; }
 
     public event Action<GamePhase, string> OnPhasePopupRequested;
     public event Action OnPhasePopupDismissed;
     public event Action<string, string> OnMessagePopupRequested;
     public event Action<bool> OnPlayerSelectionChanged;
+    public event Action<bool> OnShieldSelectionChanged;
 
     public void RequestPhasePopup(GamePhase phase, string instructionText)
     {
@@ -56,5 +58,17 @@ public class GameDialogs
     {
         IsSelectingPlayer = false;
         OnPlayerSelectionChanged?.Invoke(false);
+    }
+
+    public void BeginShieldSelection()
+    {
+        IsSelectingShield = true;
+        OnShieldSelectionChanged?.Invoke(true);
+    }
+
+    public void EndShieldSelection()
+    {
+        IsSelectingShield = false;
+        OnShieldSelectionChanged?.Invoke(false);
     }
 }

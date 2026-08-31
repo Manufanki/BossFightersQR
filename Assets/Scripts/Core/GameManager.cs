@@ -22,10 +22,13 @@ public class GameManager : MonoBehaviour
     private PhaseStateMachine _phaseStateMachine;
     private CardRegistry _cardRegistry;
     private CardEffectResolver _cardEffectResolver;
+    private BossAbilitySystem _bossAbilitySystem;
+    private readonly Queue<BossTrigger> _pendingBossTriggers = new Queue<BossTrigger>();
     private readonly Queue<ProtectionCardEffect> _pendingProtections = new Queue<ProtectionCardEffect>();
     private readonly Queue<ExtraTurnCardEffect> _pendingExtraTurns = new Queue<ExtraTurnCardEffect>();
     private readonly Queue<CleanseAttackCardEffect> _pendingCleanses = new Queue<CleanseAttackCardEffect>();
-    private enum PlayerSelectionMode { None, ProtectionTarget, ExtraTurnTarget, StartPlayer, CleanseTarget }
+    private readonly Queue<ShieldStrikeCardEffect> _pendingShieldStrikes = new Queue<ShieldStrikeCardEffect>();
+    private enum PlayerSelectionMode { None, ProtectionTarget, ExtraTurnTarget, StartPlayer, CleanseTarget, ShieldTarget }
     private PlayerSelectionMode _selectionMode = PlayerSelectionMode.None;
     private bool _isResolvingCard;
 
@@ -36,7 +39,7 @@ public class GameManager : MonoBehaviour
     public event Action<string> OnActionLog;
     public event Action<Player> OnPlayerActionPerformed;
     public event Action<Player> OnCurrentPlayerChanged;
-    public event Action<DamageType> OnAttackEffectExecuted;
+    public event Action<DamageType, int> OnAttackEffectExecuted;
 
     public GamePhase CurrentPhase => _phaseStateMachine.CurrentPhase.PhaseId;
     public int Round => _phaseStateMachine.Round;
@@ -44,6 +47,9 @@ public class GameManager : MonoBehaviour
     public IReadOnlyList<Player> Players => players;
     public Player CurrentPlayer { get; private set; }
     public BossController Boss { get; private set; } = new BossController();
+
+    // True while boss-trigger popups still need to be acknowledged before the phase continues.
+    public bool HasPendingBossTriggers => _pendingBossTriggers.Count > 0;
 
     public bool WasAttackTypePlayedThisRound(DamageType type) =>
         _cardEffectResolver != null && _cardEffectResolver.WasAttackTypePlayedThisRound(type);
@@ -66,8 +72,11 @@ public class GameManager : MonoBehaviour
             Debug.LogWarning("[GameManager] No BossData assigned; boss will remain uninitialized.");
 
         Boss.SetPlayers(players);
-        _cardEffectResolver = new CardEffectResolver(Boss, Log, ShowMessagePopup, RequestProtectionTarget, RequestExtraTurnTarget, RequestCleanseTarget, () => Round);
-        _cardEffectResolver.OnAttackEffectExecuted += type => OnAttackEffectExecuted?.Invoke(type);
+        _bossAbilitySystem = new BossAbilitySystem(Boss, players);
+        _bossAbilitySystem.OnTriggerDue += HandleBossTriggerDue;
+
+        _cardEffectResolver = new CardEffectResolver(Boss, Log, ShowMessagePopup, RequestProtectionTarget, RequestExtraTurnTarget, RequestCleanseTarget, () => Round, RequestShieldTarget);
+        _cardEffectResolver.OnAttackEffectExecuted += (type, amount) => OnAttackEffectExecuted?.Invoke(type, amount);
         _cardEffectResolver.OnCardResolved += HandleCardResolved;
 
         Boss.OnHPChanged += (hp, maxHp) =>
@@ -80,10 +89,6 @@ public class GameManager : MonoBehaviour
         Boss.OnPoisonTokensChanged += tokens => Log($"Boss poison tokens: {tokens}");
         Boss.OnBossAttackPlanned += attack => Log($"Boss plans '{attack.Name}' on Player {attack.Target.PlayerNumber}: {attack.Damage} damage" +
             (attack.StatusEffect != StatusEffectType.None ? $" + {attack.StatusEffect}" : string.Empty));
-        Boss.OnReactionTriggered += reaction => Log($"Boss reaction: players take {reaction.retaliationDamage} damage ({reaction.description})");
-        Boss.OnHPTriggerFired += trigger => Log($"Boss HP trigger at {trigger.hpThreshold} HP: +{trigger.attackBonusDamage} attack damage ({trigger.description})");
-        Boss.OnTimeTriggerFired += trigger => Log($"Boss time trigger (round {trigger.triggerOnRound}): players take {trigger.damageToAllPlayers} damage ({trigger.description})");
-        Boss.OnShieldTriggerFired += trigger => Log($"Boss shield trigger ({trigger.shieldType}): players take {trigger.damageOnDestroy} damage ({trigger.description})");
 
         var phases = new List<IGamePhase>
         {
@@ -115,7 +120,10 @@ public class GameManager : MonoBehaviour
     private void HandlePhaseEntered(IGamePhase phase)
     {
         if (phase.PhaseId == GamePhase.Action)
+        {
             _cardEffectResolver.ResetRound();
+            _bossAbilitySystem.ResetRound();
+        }
 
         switch (phase.PhaseId)
         {
@@ -134,14 +142,29 @@ public class GameManager : MonoBehaviour
         }
 
         OnPhaseChanged?.Invoke(phase.PhaseId);
+
+        // Modular boss triggers fire at phase entry, after the phase's own logic ran.
+        _bossAbilitySystem.EvaluatePhaseEntry(phase.PhaseId, Round);
+    }
+
+    private void HandleBossTriggerDue(BossTrigger trigger)
+    {
+        _pendingBossTriggers.Enqueue(trigger);
+        Log($"Boss trigger: {trigger.triggerName}");
+        ShowNextBossTriggerPopup();
+    }
+
+    private void ShowNextBossTriggerPopup()
+    {
+        if (_pendingBossTriggers.Count == 0 || Dialogs.HasActiveMessagePopup)
+            return;
+
+        BossTrigger trigger = _pendingBossTriggers.Peek();
+        ShowMessagePopup($"Boss: {trigger.triggerName}", BossAbilitySystem.DescribeTrigger(trigger));
     }
 
     private void HandleRoundChanged(int newRound)
     {
-        // newRound is already incremented, so the round that just finished is newRound - 1.
-        if (newRound > 1)
-            Boss.EvaluateTimeTriggers(newRound - 1);
-
         OnRoundChanged?.Invoke(newRound);
     }
 
@@ -160,7 +183,7 @@ public class GameManager : MonoBehaviour
     public void CompleteManualPhase()
     {
         if (_phaseStateMachine.CurrentPhase is PopupPhase popupPhase)
-            popupPhase.Complete();
+            popupPhase.CompleteWhenIdle(this);
         else
             Log($"CompleteManualPhase() ignored: {CurrentPhase} must finish through its own game logic.");
     }
@@ -176,6 +199,8 @@ public class GameManager : MonoBehaviour
 
         if (CurrentPhase != GamePhase.Action)
             CompleteManualPhase();
+        else if (_phaseStateMachine.CurrentPhase is PopupPhase popupPhase)
+            popupPhase.CompleteWhenIdle(this);
     }
 
     public void ShowMessagePopup(string title, string message)
@@ -187,6 +212,26 @@ public class GameManager : MonoBehaviour
     public void DismissMessagePopup()
     {
         Dialogs.DismissMessage();
+
+        // A boss trigger popup was closed: apply its effects, then show the next one.
+        if (_pendingBossTriggers.Count > 0)
+        {
+            BossTrigger trigger = _pendingBossTriggers.Dequeue();
+            _bossAbilitySystem.ApplyEffects(trigger, Round, Log);
+
+            if (_pendingBossTriggers.Count > 0)
+            {
+                ShowNextBossTriggerPopup();
+                return;
+            }
+
+            // Queue drained. If it was opened standalone (shield break between cards,
+            // not during a card), resume scanning here.
+            if (!_isResolvingCard)
+                UpdateQrScanningState();
+
+            return;
+        }
 
         bool startedSelection = false;
         if (_pendingProtections.Count > 0)
@@ -207,11 +252,25 @@ public class GameManager : MonoBehaviour
             Dialogs.BeginPlayerSelection();
             startedSelection = true;
         }
+        else if (_pendingShieldStrikes.Count > 0)
+        {
+            _selectionMode = PlayerSelectionMode.ShieldTarget;
+            Dialogs.BeginShieldSelection();
+            startedSelection = true;
+        }
 
         // Non-selection effects resume the queue as soon as their popup closes;
         // selection effects resume after the player picks a target.
         if (!startedSelection)
             _cardEffectResolver.CompleteInteraction(CurrentPlayer);
+
+        // A boss trigger that fired mid-card (shield break) is shown once the card's
+        // queue has no pending popup: surface it now, before scanning resumes.
+        if (!Dialogs.HasActiveMessagePopup && _bossAbilitySystem.HasDeferredTriggers)
+        {
+            _bossAbilitySystem.FlushQueuedTriggers();
+            ShowNextBossTriggerPopup();
+        }
 
         UpdateQrScanningState();
     }
@@ -266,6 +325,38 @@ public class GameManager : MonoBehaviour
     {
         _pendingCleanses.Enqueue(effect);
         Log("Cleanse: choose a player whose boss attack loses its status effect.");
+    }
+
+    private void RequestShieldTarget(ShieldStrikeCardEffect effect)
+    {
+        _pendingShieldStrikes.Enqueue(effect);
+        Log($"Shield Strike: click a boss shield to reduce it by {effect.damage.Evaluate(Round, BossAttackAgainstCurrentPlayer())}.");
+    }
+
+    // Called by the HUD when a shield icon is clicked while ShieldTarget selection is active.
+    public bool TrySelectShieldTarget(DamageType type)
+    {
+        if (_selectionMode != PlayerSelectionMode.ShieldTarget || _pendingShieldStrikes.Count == 0)
+            return false;
+
+        ShieldStrikeCardEffect effect = _pendingShieldStrikes.Dequeue();
+        Dialogs.EndShieldSelection();
+        _selectionMode = PlayerSelectionMode.None;
+        int amount = effect.damage.Evaluate(Round, BossAttackAgainstCurrentPlayer());
+
+        if (effect.suppressShieldTrigger)
+            Boss.DisarmShieldTrigger(type);
+
+        int poison = effect.poisonOnBreak.Evaluate(Round, BossAttackAgainstCurrentPlayer());
+        if (poison > 0)
+            Boss.ArmShieldBreakPoison(type, poison);
+
+        Boss.DamageShield(type, amount);
+        Log($"Shield Strike: {type} shield reduced by {amount} to {Boss.GetShield(type)}" +
+            (effect.suppressShieldTrigger ? " (trigger suppressed)" : string.Empty) +
+            (poison > 0 ? $" (armed with {poison} poison on break)" : string.Empty) + ".");
+        _cardEffectResolver.CompleteInteraction(CurrentPlayer);
+        return true;
     }
 
     public bool TrySelectProtectionTarget(Player target)
@@ -330,6 +421,7 @@ public class GameManager : MonoBehaviour
         _pendingProtections.Clear();
         _pendingExtraTurns.Clear();
         _pendingCleanses.Clear();
+        _pendingShieldStrikes.Clear();
         _selectionMode = PlayerSelectionMode.StartPlayer;
         Dialogs.IsStartPlayerSelectionActive = true;
         ShowPhasePopup(GamePhase.Action, startPlayerPrompt);
@@ -436,6 +528,14 @@ public class GameManager : MonoBehaviour
 
         _isResolvingCard = false;
         PerformPlayerAction(player.ExtraActionsGrantedByCard > 0);
+
+        // A shield broken during this card surfaces its boss trigger between cards.
+        if (!Dialogs.HasActiveMessagePopup && _bossAbilitySystem.HasDeferredTriggers)
+        {
+            _bossAbilitySystem.FlushQueuedTriggers();
+            ShowNextBossTriggerPopup();
+        }
+
         UpdateQrScanningState();
     }
 
@@ -455,8 +555,12 @@ public class GameManager : MonoBehaviour
 
     private bool CanCurrentPlayerUseCard(CardData card)
     {
-        bool matchingHero = card.heroType == HeroType.All || card.heroType == CurrentPlayer.HeroType;
-        bool matchingClass = card.classType == ClassType.All || card.classType == CurrentPlayer.ClassType;
+        // All works both ways: a card marked All fits every player, and a player marked
+        // All can use every card regardless of its hero/class restriction.
+        bool matchingHero = card.heroType == HeroType.All || CurrentPlayer.HeroType == HeroType.All
+            || card.heroType == CurrentPlayer.HeroType;
+        bool matchingClass = card.classType == ClassType.All || CurrentPlayer.ClassType == ClassType.All
+            || card.classType == CurrentPlayer.ClassType;
         return matchingHero && matchingClass;
     }
 

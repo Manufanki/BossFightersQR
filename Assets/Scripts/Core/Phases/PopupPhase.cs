@@ -30,4 +30,12 @@ public abstract class PopupPhase : IGamePhase
     {
         IsComplete = true;
     }
+
+    // Phases with popup instructions only finish once pending boss-trigger popups
+    // (which fire on phase entry) have all been acknowledged.
+    public void CompleteWhenIdle(GameManager gameManager)
+    {
+        if (!gameManager.HasPendingBossTriggers)
+            Complete();
+    }
 }

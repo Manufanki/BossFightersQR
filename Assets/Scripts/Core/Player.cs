@@ -30,6 +30,9 @@ public class Player
     public bool IsWaitingForInteraction { get; private set; }
     public int ExtraActionsGrantedByCard { get; private set; }
 
+    // Bonus damage added to this player's next attack effect, then consumed.
+    public int PendingAttackBoost { get; private set; }
+
     // Unity-deserialized instances skip the constructor, so initialize these on first use.
     private List<CardData> PlayedCardsList => _playedCards ??= new List<CardData>();
     private Queue<CardEffect> EffectQueue => _effectQueue ??= new Queue<CardEffect>();
@@ -50,6 +53,7 @@ public class Player
         CardInPlay = null;
         IsWaitingForInteraction = false;
         ExtraActionsGrantedByCard = 0;
+        PendingAttackBoost = 0;
         OnActionsChanged?.Invoke(this);
     }
 
@@ -120,6 +124,20 @@ public class Player
     public void ResumeFromInteraction()
     {
         IsWaitingForInteraction = false;
+    }
+
+    public void AddPendingAttackBoost(int amount)
+    {
+        if (amount > 0)
+            PendingAttackBoost += amount;
+    }
+
+    // Returns the pending boost once and clears it.
+    public int ConsumePendingAttackBoost()
+    {
+        int boost = PendingAttackBoost;
+        PendingAttackBoost = 0;
+        return boost;
     }
 
     public void CompleteCard()

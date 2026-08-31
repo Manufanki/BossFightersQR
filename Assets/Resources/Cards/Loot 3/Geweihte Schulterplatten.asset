@@ -10,24 +10,29 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 801510caa6a2fac4da879fb421225fcb, type: 3}
-  m_Name: Diadem der Unsichtbarkeit -SPECIAL Elf
+  m_Name: Geweihte Schulterplatten
   m_EditorClassIdentifier: Assembly-CSharp::CardData
-  cardName: Diadem der Unsichtbarkeit
+  cardName: Geweihte Schulterplatteb
   description: 
-  qrId: WAEAAA==
-  heroType: 2
+  qrId: CgEAAA==
+  heroType: 0
   classType: 0
   effects:
-  - rid: 8571227120829202550
-  - rid: 8571227120829202551
+  - rid: 8571227120829202518
+  - rid: 8571227123635191879
   references:
     version: 2
     RefIds:
-    - rid: 8571227120829202550
-      type: {class: SpecialCardEffect, ns: , asm: Assembly-CSharp}
+    - rid: 8571227120829202518
+      type: {class: ProtectionCardEffect, ns: , asm: Assembly-CSharp}
       data:
-        description: "n\xE4chster angrifff +3"
-    - rid: 8571227120829202551
-      type: {class: LightningCardEffect, ns: , asm: Assembly-CSharp}
+        protection:
+          mode: 0
+          constant: 4
+          min: 0
+          max: 0
+        targetMode: 1
+    - rid: 8571227123635191879
+      type: {class: CleanseAttackCardEffect, ns: , asm: Assembly-CSharp}
       data:
-        additionalActions: 1
+        targetMode: 4

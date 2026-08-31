@@ -10,27 +10,28 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 801510caa6a2fac4da879fb421225fcb, type: 3}
-  m_Name: Vipernzahn Rogue 1
+  m_Name: Diadem der Unsichtbarkeit Elf
   m_EditorClassIdentifier: Assembly-CSharp::CardData
-  cardName: Hornissenstachel
+  cardName: Diadem der Unsichtbarkeit
   description: 
-  qrId: UwAAAA==
-  heroType: 0
-  classType: 3
+  qrId: WAEAAA==
+  heroType: 2
+  classType: 0
   effects:
-  - rid: 8571227120829202545
-  - rid: 8571227120829202547
+  - rid: 8571227120829202551
+  - rid: 8571227123635191878
   references:
     version: 2
     RefIds:
-    - rid: 8571227120829202545
-      type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
-      data:
-        damageType: 1
-        damage:
-          mode: 0
-          constant: 2
-    - rid: 8571227120829202547
+    - rid: 8571227120829202551
       type: {class: LightningCardEffect, ns: , asm: Assembly-CSharp}
       data:
         additionalActions: 1
+    - rid: 8571227123635191878
+      type: {class: AttackBoostCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        boost:
+          mode: 0
+          constant: 3
+          min: 0
+          max: 0

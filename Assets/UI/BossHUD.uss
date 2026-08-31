@@ -53,6 +53,18 @@
     -unity-font-style: bold;
 }
 
+.poison-label {
+    color: rgb(150, 220, 100);
+    font-size: 20px;
+    -unity-font-style: bold;
+    margin-top: 6px;
+    display: none;
+}
+
+.poison-label--visible {
+    display: flex;
+}
+
 .shield-row {
     position: relative;
     flex-direction: row;
@@ -93,6 +105,16 @@
 
 .shield-icon--active.magic-icon {
     background-color: rgb(70, 100, 220);
+}
+
+.shield-icon--selectable {
+    border-color: rgb(80, 160, 255);
+    border-width: 4px;
+    scale: 1.08;
+}
+
+.shield-icon--selectable:hover {
+    border-color: rgb(140, 200, 255);
 }
 
 .shield-label {
@@ -195,6 +217,15 @@
 
 .play-card-button {
     height: 24px;
+}
+
+.round-label {
+    position: absolute;
+    left: 24px;
+    bottom: 24px;
+    color: rgb(200, 208, 224);
+    font-size: 18px;
+    -unity-font-style: bold;
 }
 
 .phase-popup {

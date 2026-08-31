@@ -15,7 +15,9 @@ public class CardDataEditor : Editor
         "Remove Status",
         "Extra Turn",
         "Cleanse Attack",
-        "Special"
+        "Special",
+        "Attack Boost",
+        "Shield Strike"
     };
 
     private QRCodeReader _qrCodeReader;
@@ -120,6 +122,8 @@ public class CardDataEditor : Editor
             case 7: return new ExtraTurnCardEffect();
             case 8: return new CleanseAttackCardEffect();
             case 9: return new SpecialCardEffect();
+            case 10: return new AttackBoostCardEffect();
+            case 11: return new ShieldStrikeCardEffect();
             default: throw new System.ArgumentOutOfRangeException(nameof(effectTypeIndex), effectTypeIndex, null);
         }
     }

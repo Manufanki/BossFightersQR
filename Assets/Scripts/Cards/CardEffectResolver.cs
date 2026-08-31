@@ -12,17 +12,19 @@ public class CardEffectResolver
     private readonly Action<ProtectionCardEffect> _requestProtectionTarget;
     private readonly Action<ExtraTurnCardEffect, Player> _requestExtraTurnTarget;
     private readonly Action<CleanseAttackCardEffect> _requestCleanseTarget;
+    private readonly Action<ShieldStrikeCardEffect> _requestShieldTarget;
     private readonly Func<int> _getCurrentRound;
     private readonly HashSet<DamageType> _attackTypesPlayedThisRound = new HashSet<DamageType>();
 
-    public event Action<DamageType> OnAttackEffectExecuted;
+    public event Action<DamageType, int> OnAttackEffectExecuted;
     public event Action<Player> OnCardResolved;
 
     public bool WasAttackTypePlayedThisRound(DamageType type) => _attackTypesPlayedThisRound.Contains(type);
 
     public CardEffectResolver(BossController boss, Action<string> log, Action<string, string> showMessage,
         Action<ProtectionCardEffect> requestProtectionTarget, Action<ExtraTurnCardEffect, Player> requestExtraTurnTarget,
-        Action<CleanseAttackCardEffect> requestCleanseTarget, Func<int> getCurrentRound)
+        Action<CleanseAttackCardEffect> requestCleanseTarget, Func<int> getCurrentRound,
+        Action<ShieldStrikeCardEffect> requestShieldTarget)
     {
         _boss = boss;
         _log = log;
@@ -31,6 +33,7 @@ public class CardEffectResolver
         _requestExtraTurnTarget = requestExtraTurnTarget;
         _requestCleanseTarget = requestCleanseTarget;
         _getCurrentRound = getCurrentRound;
+        _requestShieldTarget = requestShieldTarget;
     }
 
     // Supports only work if a matching Attack was played earlier in the same round.
@@ -84,6 +87,12 @@ public class CardEffectResolver
             case AttackCardEffect attack:
                 ResolveAttackEffect(player, attack);
                 break;
+            case AttackBoostCardEffect attackBoost:
+                ResolveAttackBoostEffect(player, attackBoost);
+                break;
+            case ShieldStrikeCardEffect shieldStrike:
+                ResolveShieldStrikeEffect(player, shieldStrike);
+                break;
             case SupportCardEffect support:
                 ResolveSupportEffect(player, support);
                 break;
@@ -120,10 +129,28 @@ public class CardEffectResolver
     private void ResolveAttackEffect(Player player, AttackCardEffect effect)
     {
         int amount = effect.damage.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        int boost = player.ConsumePendingAttackBoost();
+        amount += boost;
         _boss.TakeDamage(amount, effect.damageType);
         _attackTypesPlayedThisRound.Add(effect.damageType);
-        OnAttackEffectExecuted?.Invoke(effect.damageType);
-        Report(player, $"Player {player.PlayerNumber} used a {effect.damageType} attack for {amount} damage.");
+        OnAttackEffectExecuted?.Invoke(effect.damageType, amount);
+        Report(player, boost > 0
+            ? $"Player {player.PlayerNumber} used a boosted {effect.damageType} attack for {amount} damage (+{boost} boost)."
+            : $"Player {player.PlayerNumber} used a {effect.damageType} attack for {amount} damage.");
+    }
+
+    private void ResolveAttackBoostEffect(Player player, AttackBoostCardEffect effect)
+    {
+        int amount = effect.boost.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        player.AddPendingAttackBoost(amount);
+        Report(player, $"Player {player.PlayerNumber}'s next attack is boosted by {amount}.");
+    }
+
+    private void ResolveShieldStrikeEffect(Player player, ShieldStrikeCardEffect effect)
+    {
+        int amount = effect.damage.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        Report(player, $"After closing this, click a boss shield to reduce it by {amount}.");
+        _requestShieldTarget(effect);
     }
 
     private void ResolveSupportEffect(Player player, SupportCardEffect effect)

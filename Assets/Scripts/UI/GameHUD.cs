@@ -15,7 +15,7 @@ public class GameHUD : MonoBehaviour
     private Label _bossNameLabel;
     private VisualElement _hpFill;
     private Label _hpLabel;
-    private Label _roundLabel;
+    private Label _poisonLabel;
     private Label _meleeShieldLabel;
     private Label _rangedShieldLabel;
     private Label _magicShieldLabel;
@@ -26,6 +26,7 @@ public class GameHUD : MonoBehaviour
     private readonly List<PlayerPanelView> _playerPanels = new List<PlayerPanelView>();
     private TextField _cardIdInput;
     private Button _playCardButton;
+    private Label _roundLabel;
     private VisualElement _phasePopup;
     private Label _phasePopupTitle;
     private Label _phasePopupMessage;
@@ -65,7 +66,7 @@ public class GameHUD : MonoBehaviour
         _bossNameLabel = root.Q<Label>("boss-name");
         _hpFill = root.Q<VisualElement>("hp-fill");
         _hpLabel = root.Q<Label>("hp-label");
-        _roundLabel = root.Q<Label>("round-label");
+        _poisonLabel = root.Q<Label>("poison-label");
         _meleeShieldLabel = root.Q<Label>("melee-shield-label");
         _rangedShieldLabel = root.Q<Label>("ranged-shield-label");
         _magicShieldLabel = root.Q<Label>("magic-shield-label");
@@ -75,6 +76,7 @@ public class GameHUD : MonoBehaviour
         _playerRow = root.Q<VisualElement>("player-row");
         _cardIdInput = root.Q<TextField>("card-id-input");
         _playCardButton = root.Q<Button>("play-card-button");
+        _roundLabel = root.Q<Label>("round-label");
         _phasePopup = root.Q<VisualElement>("phase-popup");
         _phasePopupTitle = root.Q<Label>("phase-popup-title");
         _phasePopupMessage = root.Q<Label>("phase-popup-message");
@@ -92,6 +94,12 @@ public class GameHUD : MonoBehaviour
             _closeMessagePopupButton.clicked += CloseMessagePopup;
         if (_cardIdInput != null)
             _cardIdInput.RegisterCallback<KeyDownEvent>(HandleCardIdKeyDown);
+        if (_meleeShieldIcon != null)
+            _meleeShieldIcon.RegisterCallback<ClickEvent>(_ => HandleShieldIconClicked(DamageType.Melee));
+        if (_rangedShieldIcon != null)
+            _rangedShieldIcon.RegisterCallback<ClickEvent>(_ => HandleShieldIconClicked(DamageType.Ranged));
+        if (_magicShieldIcon != null)
+            _magicShieldIcon.RegisterCallback<ClickEvent>(_ => HandleShieldIconClicked(DamageType.Magic));
 
         BuildPlayerPanels();
 
@@ -109,6 +117,7 @@ public class GameHUD : MonoBehaviour
             return;
 
         gameManager.Boss.OnHPChanged += HandleHPChanged;
+        gameManager.Boss.OnPoisonTokensChanged += HandlePoisonTokensChanged;
         gameManager.Boss.OnShieldChanged += HandleShieldChanged;
         gameManager.Boss.OnBossAttackPlanned += HandleBossAttackPlanned;
         gameManager.Boss.OnPlayerAttackDamageChanged += HandlePlayerAttackDamageChanged;
@@ -119,6 +128,7 @@ public class GameHUD : MonoBehaviour
         gameManager.Dialogs.OnPhasePopupDismissed += HidePhasePopup;
         gameManager.Dialogs.OnMessagePopupRequested += ShowMessagePopup;
         gameManager.Dialogs.OnPlayerSelectionChanged += SetPlayerPanelsSelectable;
+        gameManager.Dialogs.OnShieldSelectionChanged += SetShieldIconsSelectable;
         gameManager.OnCurrentPlayerChanged += HandleCurrentPlayerChanged;
         gameManager.OnAttackEffectExecuted += HandleAttackEffectExecuted;
         RefreshAll();
@@ -130,6 +140,7 @@ public class GameHUD : MonoBehaviour
             return;
 
         gameManager.Boss.OnHPChanged -= HandleHPChanged;
+        gameManager.Boss.OnPoisonTokensChanged -= HandlePoisonTokensChanged;
         gameManager.Boss.OnShieldChanged -= HandleShieldChanged;
         gameManager.Boss.OnBossAttackPlanned -= HandleBossAttackPlanned;
         gameManager.Boss.OnPlayerAttackDamageChanged -= HandlePlayerAttackDamageChanged;
@@ -140,6 +151,7 @@ public class GameHUD : MonoBehaviour
         gameManager.Dialogs.OnPhasePopupDismissed -= HidePhasePopup;
         gameManager.Dialogs.OnMessagePopupRequested -= ShowMessagePopup;
         gameManager.Dialogs.OnPlayerSelectionChanged -= SetPlayerPanelsSelectable;
+        gameManager.Dialogs.OnShieldSelectionChanged -= SetShieldIconsSelectable;
         gameManager.OnCurrentPlayerChanged -= HandleCurrentPlayerChanged;
         gameManager.OnAttackEffectExecuted -= HandleAttackEffectExecuted;
     }
@@ -176,6 +188,21 @@ public class GameHUD : MonoBehaviour
     {
         foreach (PlayerPanelView panel in _playerPanels)
             panel.SetSelectable(selectable);
+    }
+
+    private void HandleShieldIconClicked(DamageType type)
+    {
+        if (gameManager == null || !gameManager.Dialogs.IsSelectingShield)
+            return;
+
+        gameManager.TrySelectShieldTarget(type);
+    }
+
+    private void SetShieldIconsSelectable(bool selectable)
+    {
+        _meleeShieldIcon?.EnableInClassList("shield-icon--selectable", selectable);
+        _rangedShieldIcon?.EnableInClassList("shield-icon--selectable", selectable);
+        _magicShieldIcon?.EnableInClassList("shield-icon--selectable", selectable);
     }
 
     private void PlayTestCard()
@@ -286,7 +313,7 @@ public class GameHUD : MonoBehaviour
             _roundLabel.text = $"Round {round}";
     }
 
-    private void HandleAttackEffectExecuted(DamageType type)
+    private void HandleAttackEffectExecuted(DamageType type, int amount)
     {
         SetShieldHighlight(type, true);
     }
@@ -322,6 +349,15 @@ public class GameHUD : MonoBehaviour
         _hpFill.style.width = new Length(maxHp > 0 ? (float)hp / maxHp * 100f : 0f, LengthUnit.Percent);
     }
 
+    private void HandlePoisonTokensChanged(int tokens)
+    {
+        if (_poisonLabel == null)
+            return;
+
+        _poisonLabel.text = $"Poison: {tokens}";
+        _poisonLabel.EnableInClassList("poison-label--visible", tokens > 0);
+    }
+
     private void HandleShieldChanged(DamageType type, int value)
     {
         switch (type)
@@ -340,14 +376,16 @@ public class GameHUD : MonoBehaviour
         BossController boss = gameManager.Boss;
         _bossNameLabel.text = boss.BossName;
         HandleHPChanged(boss.CurrentHP, boss.MaxHP);
+        HandlePoisonTokensChanged(boss.PoisonTokens);
         HandleShieldChanged(DamageType.Melee, boss.MeleeShield);
         HandleShieldChanged(DamageType.Ranged, boss.RangedShield);
         HandleShieldChanged(DamageType.Magic, boss.MagicShield);
-        HandleRoundChanged(gameManager.Round);
         RefreshShieldHighlights();
         RefreshAllPanels();
         UpdateActivePlayerPanel();
+        HandleRoundChanged(gameManager.Round);
         SetPlayerPanelsSelectable(gameManager.Dialogs.IsSelectingPlayer);
+        SetShieldIconsSelectable(gameManager.Dialogs.IsSelectingShield);
     }
 
     private void UpdateActivePlayerPanel()
