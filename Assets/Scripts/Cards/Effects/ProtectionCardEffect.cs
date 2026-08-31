@@ -4,6 +4,6 @@ using System;
 [Serializable]
 public class ProtectionCardEffect : CardEffect
 {
-    public int protection;
+    public EffectValue protection;
     public TargetMode targetMode = TargetMode.OnePlayer;
 }

@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 801510caa6a2fac4da879fb421225fcb, type: 3}
+  m_Name: Klinge des Windes
+  m_EditorClassIdentifier: Assembly-CSharp::CardData
+  cardName: Klinge des Windes
+  description: 
+  qrId: CwEAAA==
+  heroType: 0
+  classType: 0
+  effects:
+  - rid: 8571227120829202506
+  - rid: 8571227120829202507
+  references:
+    version: 2
+    RefIds:
+    - rid: 8571227120829202506
+      type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damageType: 0
+        damage:
+          mode: 0
+          constant: 3
+    - rid: 8571227120829202507
+      type: {class: LightningCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        additionalActions: 1

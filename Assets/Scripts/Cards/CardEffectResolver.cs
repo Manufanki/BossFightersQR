@@ -10,7 +10,9 @@ public class CardEffectResolver
     private readonly Action<string> _log;
     private readonly Action<string, string> _showMessage;
     private readonly Action<ProtectionCardEffect> _requestProtectionTarget;
-    private readonly Action<ExtraTurnCardEffect> _requestExtraTurnTarget;
+    private readonly Action<ExtraTurnCardEffect, Player> _requestExtraTurnTarget;
+    private readonly Action<CleanseAttackCardEffect> _requestCleanseTarget;
+    private readonly Func<int> _getCurrentRound;
     private readonly HashSet<DamageType> _attackTypesPlayedThisRound = new HashSet<DamageType>();
 
     public event Action<DamageType> OnAttackEffectExecuted;
@@ -19,13 +21,16 @@ public class CardEffectResolver
     public bool WasAttackTypePlayedThisRound(DamageType type) => _attackTypesPlayedThisRound.Contains(type);
 
     public CardEffectResolver(BossController boss, Action<string> log, Action<string, string> showMessage,
-        Action<ProtectionCardEffect> requestProtectionTarget, Action<ExtraTurnCardEffect> requestExtraTurnTarget)
+        Action<ProtectionCardEffect> requestProtectionTarget, Action<ExtraTurnCardEffect, Player> requestExtraTurnTarget,
+        Action<CleanseAttackCardEffect> requestCleanseTarget, Func<int> getCurrentRound)
     {
         _boss = boss;
         _log = log;
         _showMessage = showMessage;
         _requestProtectionTarget = requestProtectionTarget;
         _requestExtraTurnTarget = requestExtraTurnTarget;
+        _requestCleanseTarget = requestCleanseTarget;
+        _getCurrentRound = getCurrentRound;
     }
 
     // Supports only work if a matching Attack was played earlier in the same round.
@@ -100,6 +105,9 @@ public class CardEffectResolver
             case ExtraTurnCardEffect extraTurn:
                 ResolveExtraTurnEffect(player, extraTurn);
                 break;
+            case CleanseAttackCardEffect cleanse:
+                ResolveCleanseAttackEffect(player, cleanse);
+                break;
             case SpecialCardEffect special:
                 ResolveSpecialEffect(player, special);
                 break;
@@ -111,10 +119,11 @@ public class CardEffectResolver
 
     private void ResolveAttackEffect(Player player, AttackCardEffect effect)
     {
-        _boss.TakeDamage(effect.damage, effect.damageType);
+        int amount = effect.damage.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        _boss.TakeDamage(amount, effect.damageType);
         _attackTypesPlayedThisRound.Add(effect.damageType);
         OnAttackEffectExecuted?.Invoke(effect.damageType);
-        Report(player, $"Player {player.PlayerNumber} used a {effect.damageType} attack for {effect.damage} damage.");
+        Report(player, $"Player {player.PlayerNumber} used a {effect.damageType} attack for {amount} damage.");
     }
 
     private void ResolveSupportEffect(Player player, SupportCardEffect effect)
@@ -125,38 +134,51 @@ public class CardEffectResolver
             return;
         }
 
-        _boss.TakeDamage(effect.damage, effect.damageType);
-        Report(player, $"Player {player.PlayerNumber} used a {effect.damageType} support for {effect.damage} damage.");
+        int amount = effect.damage.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        _boss.TakeDamage(amount, effect.damageType);
+        Report(player, $"Player {player.PlayerNumber} used a {effect.damageType} support for {amount} damage.");
     }
 
     private void ResolveProtectionEffect(Player player, ProtectionCardEffect effect)
     {
-        Report(player, $"Protection: after closing this, choose a player to reduce their boss attack by {effect.protection}.");
+        int amount = effect.protection.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+
+        if (TryReusePreviousTarget(player, effect.targetMode, out Player previous))
+        {
+            _boss.ReducePlayerAttackDamage(previous, amount);
+            Report(player, $"Protection: Player {previous.PlayerNumber}'s boss attack is reduced by {amount}.");
+            return;
+        }
+
+        Report(player, $"Protection: after closing this, choose a player to reduce their boss attack by {amount}.");
         _requestProtectionTarget(effect);
     }
 
     private void ResolveLightningEffect(Player player, LightningCardEffect effect)
     {
         player.AddActions(effect.additionalActions);
-        player.MarkCardGrantedExtraAction();
+        player.MarkCardGrantedExtraAction(effect.additionalActions);
         Report(player, $"Player {player.PlayerNumber} gains {effect.additionalActions} additional action(s).");
     }
 
     private void ResolveHealEffect(Player player, HealCardEffect effect)
     {
         // Hero health is intentionally tracked on physical counters, not in the app.
-        Report(player, $"{DescribeTargets(player, effect.targetMode)} recover {effect.healing} health on their counter(s).");
+        int amount = effect.healing.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        Report(player, $"{DescribeTargets(player, effect.targetMode)} recover {amount} health on their counter(s).");
     }
 
     private void ResolveDrawEffect(Player player, DrawCardEffect effect)
     {
         // Physical draw piles are handled by the players; the app only reports the instruction.
-        Report(player, $"{DescribeTargets(player, effect.targetMode)} draw {effect.cardsToDraw} card(s).");
+        int amount = effect.cardsToDraw.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        Report(player, $"{DescribeTargets(player, effect.targetMode)} draw {amount} card(s).");
     }
 
     private void ResolveRemoveStatusEffect(Player player, RemoveStatusCardEffect effect)
     {
-        Report(player, $"{DescribeTargets(player, effect.targetMode)} may remove {effect.tokensToRemove} status token(s).");
+        int amount = effect.tokensToRemove.Evaluate(_getCurrentRound(), BossAttackAgainst(player));
+        Report(player, $"{DescribeTargets(player, effect.targetMode)} may remove {amount} status token(s).");
     }
 
     private void ResolveExtraTurnEffect(Player player, ExtraTurnCardEffect effect)
@@ -165,13 +187,41 @@ public class CardEffectResolver
         if (effect.targetMode == TargetMode.ActivePlayer)
         {
             player.AddActions(1);
-            player.MarkCardGrantedExtraAction();
+            player.MarkCardGrantedExtraAction(1);
             Report(player, $"Player {player.PlayerNumber} takes an additional action immediately.");
             return;
         }
 
+        if (TryReusePreviousTarget(player, effect.targetMode, out Player previous))
+        {
+            Report(player, $"Player {previous.PlayerNumber} takes an immediate turn.");
+            _requestExtraTurnTarget(effect, previous);
+            return;
+        }
+
         Report(player, "Choose a player to take an immediate turn (they may choose themselves).");
-        _requestExtraTurnTarget(effect);
+        _requestExtraTurnTarget(effect, null);
+    }
+
+    private void ResolveCleanseAttackEffect(Player player, CleanseAttackCardEffect effect)
+    {
+        if (TryReusePreviousTarget(player, effect.targetMode, out Player previous))
+        {
+            _boss.RemovePlayerAttackStatusEffect(previous);
+            Report(player, $"Player {previous.PlayerNumber}'s boss attack loses its status effect.");
+            return;
+        }
+
+        Report(player, "Choose a player whose boss attack loses its status effect (damage is unchanged).");
+        _requestCleanseTarget(effect);
+    }
+
+    // PreviousTarget reuses the target from the prior effect on this card; falls back to
+    // OnePlayer (prompt) when no target was chosen yet.
+    private bool TryReusePreviousTarget(Player player, TargetMode mode, out Player target)
+    {
+        target = mode == TargetMode.PreviousTarget ? player.LastSelectedTarget : null;
+        return target != null;
     }
 
     private void ResolveSpecialEffect(Player player, SpecialCardEffect effect)
@@ -188,6 +238,13 @@ public class CardEffectResolver
             case TargetMode.OnePlayer: return "One chosen player";
             default: return $"Player {player.PlayerNumber}";
         }
+    }
+
+    // The planned boss attack damage against the given player (0 if none is planned).
+    private int BossAttackAgainst(Player player)
+    {
+        PlannedBossAttack attack = _boss.GetPlannedAttack(player);
+        return attack?.Damage ?? 0;
     }
 
     // Reports an effect and pauses the player's queue until the popup is acknowledged.

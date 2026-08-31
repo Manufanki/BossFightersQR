@@ -14,6 +14,7 @@ public class CardDataEditor : Editor
         "Draw",
         "Remove Status",
         "Extra Turn",
+        "Cleanse Attack",
         "Special"
     };
 
@@ -117,7 +118,8 @@ public class CardDataEditor : Editor
             case 5: return new DrawCardEffect();
             case 6: return new RemoveStatusCardEffect();
             case 7: return new ExtraTurnCardEffect();
-            case 8: return new SpecialCardEffect();
+            case 8: return new CleanseAttackCardEffect();
+            case 9: return new SpecialCardEffect();
             default: throw new System.ArgumentOutOfRangeException(nameof(effectTypeIndex), effectTypeIndex, null);
         }
     }

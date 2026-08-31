@@ -27,6 +27,7 @@
             <ui:TextField name="card-id-input" label="Card ID" class="card-id-input"/>
             <ui:Button name="play-card-button" text="Play" class="play-card-button"/>
         </ui:VisualElement>
+        <ui:Label name="round-label" text="Round 1" class="round-label"/>
         <ui:VisualElement name="phase-popup" class="phase-popup">
             <ui:VisualElement class="phase-popup-content">
                 <ui:Label name="phase-popup-title" text="Phase" class="phase-popup-title"/>

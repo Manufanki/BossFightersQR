@@ -4,6 +4,6 @@ using System;
 [Serializable]
 public class RemoveStatusCardEffect : CardEffect
 {
-    public int tokensToRemove = 1;
+    public EffectValue tokensToRemove;
     public TargetMode targetMode = TargetMode.OnePlayer;
 }

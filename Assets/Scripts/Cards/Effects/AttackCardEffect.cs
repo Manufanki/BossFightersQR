@@ -5,5 +5,5 @@ using System;
 public class AttackCardEffect : CardEffect
 {
     public DamageType damageType;
-    public int damage;
+    public EffectValue damage;
 }

@@ -64,7 +64,8 @@ public class ActionPhase : IGamePhase
         currentPlayer.UseAction();
         gameManager.Log($"Player {currentPlayer.PlayerNumber} used an action ({currentPlayer.ActionsRemaining} left).");
 
-        if (grantExtraAction && currentPlayer.HasActionsRemaining)
+        // While the player has unconsumed Lightning grants, keep the turn for each one.
+        if (currentPlayer.TryConsumeExtraAction() && currentPlayer.HasActionsRemaining)
         {
             gameManager.Log($"Player {currentPlayer.PlayerNumber} takes an additional action ({currentPlayer.ActionsRemaining} left).");
             return;

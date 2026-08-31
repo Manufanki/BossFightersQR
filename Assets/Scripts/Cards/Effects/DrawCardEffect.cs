@@ -4,6 +4,6 @@ using System;
 [Serializable]
 public class DrawCardEffect : CardEffect
 {
-    public int cardsToDraw;
+    public EffectValue cardsToDraw;
     public TargetMode targetMode = TargetMode.OnePlayer;
 }

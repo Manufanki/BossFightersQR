@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 801510caa6a2fac4da879fb421225fcb, type: 3}
+  m_Name: Maske der Hellsicht Druid
+  m_EditorClassIdentifier: Assembly-CSharp::CardData
+  cardName: Maske der Hellsicht
+  description: 
+  qrId: VQAAAA==
+  heroType: 0
+  classType: 4
+  effects:
+  - rid: 8571227120829202531
+  - rid: 8571227120829202533
+  references:
+    version: 2
+    RefIds:
+    - rid: 8571227120829202531
+      type: {class: SpecialCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        description: "Ziehe 3 karten vom Nachziehstapel spiele eine davon aus lege
+          die anderen 2 in beliebiger reihenfolge auf den Nachziehstapel zur\xFCck."
+    - rid: 8571227120829202533
+      type: {class: ExtraTurnCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        targetMode: 0

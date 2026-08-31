@@ -4,6 +4,6 @@ using System;
 [Serializable]
 public class HealCardEffect : CardEffect
 {
-    public int healing;
+    public EffectValue healing;
     public TargetMode targetMode = TargetMode.OnePlayer;
 }

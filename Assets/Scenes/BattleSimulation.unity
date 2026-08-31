@@ -315,6 +315,58 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameHUD
   gameManager: {fileID: 2097748036}
+--- !u!1 &689887618
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 689887620}
+  - component: {fileID: 689887619}
+  m_Layer: 0
+  m_Name: QRCodeReader
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &689887619
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 689887618}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5b551b39ab0bced4988b670bb84cfe49, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::QRCodeReader
+  cameraIndex: 0
+  requestedWidth: 1280
+  requestedHeight: 720
+  requestedFPS: 30
+  showWebcamView: 0
+  enableDebugLogs: 0
+  decodeInterval: 0.1
+  duplicateScanCooldown: 0
+--- !u!4 &689887620
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 689887618}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2097748035
 GameObject:
   m_ObjectHideFlags: 0
@@ -344,9 +396,31 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 48a34f7849b1f64478228b4ee773de72, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameManager
-  playerCount: 1
   actionsPerPlayer: 3
+  players:
+  - playerNumber: 1
+    heroType: 1
+    classType: 4
+  - playerNumber: 2
+    heroType: 1
+    classType: 4
+  - playerNumber: 3
+    heroType: 1
+    classType: 4
+  - playerNumber: 4
+    heroType: 1
+    classType: 4
   bossData: {fileID: 11400000, guid: e38c4c6526ee38a40ab03b86530fb13b, type: 2}
+  cardDatabase: {fileID: 11400000, guid: f372b430d7db9ca47a7920b351733416, type: 2}
+  qrCodeReader: {fileID: 689887619}
+  phaseInstructions:
+    planning: The boss chooses its attack for this round.
+    shield: Restore the boss shields for this round.
+    action: Players may scan and play their action cards.
+    attack: Resolve the boss's planned attack.
+    status: Resolve active status effects.
+    dropCards: Discard any cards you do not want to keep.
+    drawCards: Draw cards for the next round.
 --- !u!4 &2097748037
 Transform:
   m_ObjectHideFlags: 0
@@ -369,3 +443,4 @@ SceneRoots:
   - {fileID: 33777813}
   - {fileID: 2097748037}
   - {fileID: 213737201}
+  - {fileID: 689887620}

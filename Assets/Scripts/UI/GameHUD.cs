@@ -15,6 +15,7 @@ public class GameHUD : MonoBehaviour
     private Label _bossNameLabel;
     private VisualElement _hpFill;
     private Label _hpLabel;
+    private Label _roundLabel;
     private Label _meleeShieldLabel;
     private Label _rangedShieldLabel;
     private Label _magicShieldLabel;
@@ -64,6 +65,7 @@ public class GameHUD : MonoBehaviour
         _bossNameLabel = root.Q<Label>("boss-name");
         _hpFill = root.Q<VisualElement>("hp-fill");
         _hpLabel = root.Q<Label>("hp-label");
+        _roundLabel = root.Q<Label>("round-label");
         _meleeShieldLabel = root.Q<Label>("melee-shield-label");
         _rangedShieldLabel = root.Q<Label>("ranged-shield-label");
         _magicShieldLabel = root.Q<Label>("magic-shield-label");
@@ -112,6 +114,7 @@ public class GameHUD : MonoBehaviour
         gameManager.Boss.OnPlayerAttackDamageChanged += HandlePlayerAttackDamageChanged;
         gameManager.OnPlayerActionPerformed += HandlePlayerActionPerformed;
         gameManager.OnPhaseChanged += HandlePhaseChanged;
+        gameManager.OnRoundChanged += HandleRoundChanged;
         gameManager.Dialogs.OnPhasePopupRequested += ShowPhasePopup;
         gameManager.Dialogs.OnPhasePopupDismissed += HidePhasePopup;
         gameManager.Dialogs.OnMessagePopupRequested += ShowMessagePopup;
@@ -132,6 +135,7 @@ public class GameHUD : MonoBehaviour
         gameManager.Boss.OnPlayerAttackDamageChanged -= HandlePlayerAttackDamageChanged;
         gameManager.OnPlayerActionPerformed -= HandlePlayerActionPerformed;
         gameManager.OnPhaseChanged -= HandlePhaseChanged;
+        gameManager.OnRoundChanged -= HandleRoundChanged;
         gameManager.Dialogs.OnPhasePopupRequested -= ShowPhasePopup;
         gameManager.Dialogs.OnPhasePopupDismissed -= HidePhasePopup;
         gameManager.Dialogs.OnMessagePopupRequested -= ShowMessagePopup;
@@ -276,6 +280,12 @@ public class GameHUD : MonoBehaviour
             RefreshAllPanels();
     }
 
+    private void HandleRoundChanged(int round)
+    {
+        if (_roundLabel != null)
+            _roundLabel.text = $"Round {round}";
+    }
+
     private void HandleAttackEffectExecuted(DamageType type)
     {
         SetShieldHighlight(type, true);
@@ -333,6 +343,7 @@ public class GameHUD : MonoBehaviour
         HandleShieldChanged(DamageType.Melee, boss.MeleeShield);
         HandleShieldChanged(DamageType.Ranged, boss.RangedShield);
         HandleShieldChanged(DamageType.Magic, boss.MagicShield);
+        HandleRoundChanged(gameManager.Round);
         RefreshShieldHighlights();
         RefreshAllPanels();
         UpdateActivePlayerPanel();

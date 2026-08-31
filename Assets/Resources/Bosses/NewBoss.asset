@@ -25,7 +25,19 @@ MonoBehaviour:
     maxDamage: 5
     statusEffect: 1
     description: 
-  reactions: []
-  hpTriggers: []
-  timeTriggers: []
-  shieldTriggers: []
+  reactions:
+  - damageThreshold: 4
+    retaliationDamage: 1
+    description: 
+  hpTriggers:
+  - hpThreshold: 45
+    attackBonusDamage: 5
+    description: 
+  timeTriggers:
+  - triggerOnRound: 2
+    damageToAllPlayers: 2
+    description: 
+  shieldTriggers:
+  - shieldType: 0
+    damageOnDestroy: 6
+    description: 

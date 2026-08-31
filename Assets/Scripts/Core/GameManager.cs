@@ -24,7 +24,8 @@ public class GameManager : MonoBehaviour
     private CardEffectResolver _cardEffectResolver;
     private readonly Queue<ProtectionCardEffect> _pendingProtections = new Queue<ProtectionCardEffect>();
     private readonly Queue<ExtraTurnCardEffect> _pendingExtraTurns = new Queue<ExtraTurnCardEffect>();
-    private enum PlayerSelectionMode { None, ProtectionTarget, ExtraTurnTarget, StartPlayer }
+    private readonly Queue<CleanseAttackCardEffect> _pendingCleanses = new Queue<CleanseAttackCardEffect>();
+    private enum PlayerSelectionMode { None, ProtectionTarget, ExtraTurnTarget, StartPlayer, CleanseTarget }
     private PlayerSelectionMode _selectionMode = PlayerSelectionMode.None;
     private bool _isResolvingCard;
 
@@ -65,7 +66,7 @@ public class GameManager : MonoBehaviour
             Debug.LogWarning("[GameManager] No BossData assigned; boss will remain uninitialized.");
 
         Boss.SetPlayers(players);
-        _cardEffectResolver = new CardEffectResolver(Boss, Log, ShowMessagePopup, RequestProtectionTarget, RequestExtraTurnTarget);
+        _cardEffectResolver = new CardEffectResolver(Boss, Log, ShowMessagePopup, RequestProtectionTarget, RequestExtraTurnTarget, RequestCleanseTarget, () => Round);
         _cardEffectResolver.OnAttackEffectExecuted += type => OnAttackEffectExecuted?.Invoke(type);
         _cardEffectResolver.OnCardResolved += HandleCardResolved;
 
@@ -76,6 +77,7 @@ public class GameManager : MonoBehaviour
                 Log("Boss defeated! Game over.");
         };
         Boss.OnShieldDestroyed += type => Log($"Boss {type} shield destroyed!");
+        Boss.OnPoisonTokensChanged += tokens => Log($"Boss poison tokens: {tokens}");
         Boss.OnBossAttackPlanned += attack => Log($"Boss plans '{attack.Name}' on Player {attack.Target.PlayerNumber}: {attack.Damage} damage" +
             (attack.StatusEffect != StatusEffectType.None ? $" + {attack.StatusEffect}" : string.Empty));
         Boss.OnReactionTriggered += reaction => Log($"Boss reaction: players take {reaction.retaliationDamage} damage ({reaction.description})");
@@ -125,6 +127,9 @@ public class GameManager : MonoBehaviour
                 break;
             case GamePhase.Attack:
                 Boss.ExecutePlannedAttacks();
+                break;
+            case GamePhase.Status:
+                Boss.TickPoison();
                 break;
         }
 
@@ -196,6 +201,12 @@ public class GameManager : MonoBehaviour
             Dialogs.BeginPlayerSelection();
             startedSelection = true;
         }
+        else if (_pendingCleanses.Count > 0)
+        {
+            _selectionMode = PlayerSelectionMode.CleanseTarget;
+            Dialogs.BeginPlayerSelection();
+            startedSelection = true;
+        }
 
         // Non-selection effects resume the queue as soon as their popup closes;
         // selection effects resume after the player picks a target.
@@ -217,13 +228,44 @@ public class GameManager : MonoBehaviour
     private void RequestProtectionTarget(ProtectionCardEffect effect)
     {
         _pendingProtections.Enqueue(effect);
-        Log($"Protection: select a player to reduce their boss attack by {effect.protection}.");
+        Log($"Protection: select a player to reduce their boss attack by {effect.protection.Evaluate(Round, BossAttackAgainstCurrentPlayer())}.");
     }
 
-    private void RequestExtraTurnTarget(ExtraTurnCardEffect effect)
+    private int BossAttackAgainstCurrentPlayer()
     {
+        PlannedBossAttack attack = CurrentPlayer == null ? null : Boss.GetPlannedAttack(CurrentPlayer);
+        return attack?.Damage ?? 0;
+    }
+
+    private void RequestExtraTurnTarget(ExtraTurnCardEffect effect, Player preselected)
+    {
+        // A preselected target (PreviousTarget) skips the choice and grants the turn directly.
+        if (preselected != null)
+        {
+            ApplyExtraTurnTarget(preselected);
+            return;
+        }
+
         _pendingExtraTurns.Enqueue(effect);
         Log("Extra Turn: choose a player to take an immediate turn.");
+    }
+
+    private void ApplyExtraTurnTarget(Player target)
+    {
+        Player sourcePlayer = CurrentPlayer;
+        CurrentPlayer.SelectTarget(target);
+        Log($"Extra Turn: Player {target.PlayerNumber} takes an immediate turn.");
+        GrantInstantTurn(target, sourcePlayer);
+        // The source's extra-turn effect stays open until the interruption finishes;
+        // meanwhile the target may scan their card.
+        _isResolvingCard = false;
+        UpdateQrScanningState();
+    }
+
+    private void RequestCleanseTarget(CleanseAttackCardEffect effect)
+    {
+        _pendingCleanses.Enqueue(effect);
+        Log("Cleanse: choose a player whose boss attack loses its status effect.");
     }
 
     public bool TrySelectProtectionTarget(Player target)
@@ -234,8 +276,10 @@ public class GameManager : MonoBehaviour
         ProtectionCardEffect effect = _pendingProtections.Dequeue();
         Dialogs.EndPlayerSelection();
         _selectionMode = PlayerSelectionMode.None;
-        Boss.ReducePlayerAttackDamage(target, effect.protection);
-        Log($"Protection: Player {target.PlayerNumber}'s boss attack is reduced by {effect.protection}.");
+        CurrentPlayer.SelectTarget(target);
+        int protectionAmount = effect.protection.Evaluate(Round, BossAttackAgainstCurrentPlayer());
+        Boss.ReducePlayerAttackDamage(target, protectionAmount);
+        Log($"Protection: Player {target.PlayerNumber}'s boss attack is reduced by {protectionAmount}.");
         _cardEffectResolver.CompleteInteraction(CurrentPlayer);
         return true;
     }
@@ -245,15 +289,25 @@ public class GameManager : MonoBehaviour
         if (_pendingExtraTurns.Count == 0 || target == null)
             return false;
 
-        Player sourcePlayer = CurrentPlayer;
         _pendingExtraTurns.Dequeue();
         Dialogs.EndPlayerSelection();
         _selectionMode = PlayerSelectionMode.None;
-        GrantInstantTurn(target, sourcePlayer);
-        // The source's extra-turn effect stays open until the interruption finishes;
-        // meanwhile the target may scan their card.
-        _isResolvingCard = false;
-        UpdateQrScanningState();
+        ApplyExtraTurnTarget(target);
+        return true;
+    }
+
+    public bool TrySelectCleanseTarget(Player target)
+    {
+        if (_pendingCleanses.Count == 0 || target == null)
+            return false;
+
+        _pendingCleanses.Dequeue();
+        Dialogs.EndPlayerSelection();
+        _selectionMode = PlayerSelectionMode.None;
+        CurrentPlayer.SelectTarget(target);
+        Boss.RemovePlayerAttackStatusEffect(target);
+        Log($"Cleanse: Player {target.PlayerNumber}'s boss attack loses its status effect.");
+        _cardEffectResolver.CompleteInteraction(CurrentPlayer);
         return true;
     }
 
@@ -263,6 +317,7 @@ public class GameManager : MonoBehaviour
         {
             case PlayerSelectionMode.ProtectionTarget: TrySelectProtectionTarget(player); break;
             case PlayerSelectionMode.ExtraTurnTarget: TrySelectExtraTurnTarget(player); break;
+            case PlayerSelectionMode.CleanseTarget: TrySelectCleanseTarget(player); break;
             case PlayerSelectionMode.StartPlayer: TrySelectStartPlayer(player); break;
         }
     }
@@ -274,6 +329,7 @@ public class GameManager : MonoBehaviour
         _isResolvingCard = false;
         _pendingProtections.Clear();
         _pendingExtraTurns.Clear();
+        _pendingCleanses.Clear();
         _selectionMode = PlayerSelectionMode.StartPlayer;
         Dialogs.IsStartPlayerSelectionActive = true;
         ShowPhasePopup(GamePhase.Action, startPlayerPrompt);
@@ -379,7 +435,7 @@ public class GameManager : MonoBehaviour
         }
 
         _isResolvingCard = false;
-        PerformPlayerAction(player.CardGrantedExtraAction);
+        PerformPlayerAction(player.ExtraActionsGrantedByCard > 0);
         UpdateQrScanningState();
     }
 

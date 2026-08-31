@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 801510caa6a2fac4da879fb421225fcb, type: 3}
+  m_Name: Meteroitenschauer Mage
+  m_EditorClassIdentifier: Assembly-CSharp::CardData
+  cardName: Meteroitenschauer
+  description: 
+  qrId: WQEAAA==
+  heroType: 0
+  classType: 2
+  effects:
+  - rid: 8571227120829202561
+  - rid: 8571227120829202572
+  - rid: 8571227120829202573
+  - rid: 8571227120829202574
+  references:
+    version: 2
+    RefIds:
+    - rid: 8571227120829202561
+      type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damageType: 0
+        damage:
+          mode: 2
+          constant: 3
+          min: 1
+          max: 3
+    - rid: 8571227120829202572
+      type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damageType: 1
+        damage:
+          mode: 2
+          constant: 0
+          min: 1
+          max: 3
+    - rid: 8571227120829202573
+      type: {class: AttackCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        damageType: 2
+        damage:
+          mode: 2
+          constant: 0
+          min: 1
+          max: 3
+    - rid: 8571227120829202574
+      type: {class: HealCardEffect, ns: , asm: Assembly-CSharp}
+      data:
+        healing:
+          mode: 0
+          constant: -2
+          min: 0
+          max: 0
+        targetMode: 0

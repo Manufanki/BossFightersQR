@@ -12,8 +12,8 @@ public class Player
     [SerializeField] private HeroType heroType;
     [SerializeField] private ClassType classType;
 
-    private readonly List<CardData> _playedCards = new List<CardData>();
-    private readonly Queue<CardEffect> _effectQueue = new Queue<CardEffect>();
+    private List<CardData> _playedCards = new List<CardData>();
+    private Queue<CardEffect> _effectQueue = new Queue<CardEffect>();
 
     public int PlayerNumber => playerNumber;
     public HeroType HeroType => heroType;
@@ -23,11 +23,16 @@ public class Player
     public bool HasActionsRemaining => ActionsRemaining > 0;
 
     public CardData CardInPlay { get; private set; }
-    public IReadOnlyList<CardData> PlayedCards => _playedCards;
-    public bool HasQueuedEffects => _effectQueue.Count > 0;
-    public int QueuedEffectCount => _effectQueue.Count;
+    public Player LastSelectedTarget { get; private set; }
+    public IReadOnlyList<CardData> PlayedCards => PlayedCardsList;
+    public bool HasQueuedEffects => EffectQueue.Count > 0;
+    public int QueuedEffectCount => EffectQueue.Count;
     public bool IsWaitingForInteraction { get; private set; }
-    public bool CardGrantedExtraAction { get; private set; }
+    public int ExtraActionsGrantedByCard { get; private set; }
+
+    // Unity-deserialized instances skip the constructor, so initialize these on first use.
+    private List<CardData> PlayedCardsList => _playedCards ??= new List<CardData>();
+    private Queue<CardEffect> EffectQueue => _effectQueue ??= new Queue<CardEffect>();
 
     public event Action<Player> OnActionsChanged;
 
@@ -40,11 +45,11 @@ public class Player
     public void StartRound(int actionsPerRound)
     {
         ActionsRemaining = actionsPerRound;
-        _playedCards.Clear();
-        _effectQueue.Clear();
+        PlayedCardsList.Clear();
+        EffectQueue.Clear();
         CardInPlay = null;
         IsWaitingForInteraction = false;
-        CardGrantedExtraAction = false;
+        ExtraActionsGrantedByCard = 0;
         OnActionsChanged?.Invoke(this);
     }
 
@@ -67,33 +72,49 @@ public class Player
     }
 
     // Stores the card and fills this player's effect queue for resolution.
+    // Extra-action grants are not reset here: they persist across the kept turns they buy.
     public void BeginCard(CardData card)
     {
         CardInPlay = card;
-        CardGrantedExtraAction = false;
-        _playedCards.Add(card);
-        _effectQueue.Clear();
+        LastSelectedTarget = null;
+        PlayedCardsList.Add(card);
+        EffectQueue.Clear();
 
         if (card.effects != null)
         {
             foreach (CardEffect effect in card.effects)
-                _effectQueue.Enqueue(effect);
+                EffectQueue.Enqueue(effect);
         }
     }
 
     public CardEffect DequeueEffect()
     {
-        return _effectQueue.Count > 0 ? _effectQueue.Dequeue() : null;
+        return EffectQueue.Count > 0 ? EffectQueue.Dequeue() : null;
     }
 
-    public void MarkCardGrantedExtraAction()
+    public void MarkCardGrantedExtraAction(int count)
     {
-        CardGrantedExtraAction = true;
+        ExtraActionsGrantedByCard += count;
+    }
+
+    // Returns true and decrements while the current card still has unused extra actions.
+    public bool TryConsumeExtraAction()
+    {
+        if (ExtraActionsGrantedByCard <= 0)
+            return false;
+
+        ExtraActionsGrantedByCard--;
+        return true;
     }
 
     public void PauseForInteraction()
     {
         IsWaitingForInteraction = true;
+    }
+
+    public void SelectTarget(Player target)
+    {
+        LastSelectedTarget = target;
     }
 
     public void ResumeFromInteraction()
@@ -104,6 +125,6 @@ public class Player
     public void CompleteCard()
     {
         CardInPlay = null;
-        _effectQueue.Clear();
+        EffectQueue.Clear();
     }
 }

@@ -19,10 +19,12 @@ public class BossController
     public int RangedShield { get; private set; }
     public int MagicShield { get; private set; }
     public int AttackBonusDamage { get; private set; }
+    public int PoisonTokens { get; private set; }
     public List<PlannedBossAttack> PlannedAttacks { get; } = new List<PlannedBossAttack>();
     public bool IsDefeated => CurrentHP <= 0;
 
     public event Action<int, int> OnHPChanged;
+    public event Action<int> OnPoisonTokensChanged;
     public event Action<DamageType, int> OnShieldChanged;
     public event Action<DamageType> OnShieldDestroyed;
     public event Action<PlannedBossAttack> OnBossAttackPlanned;
@@ -43,6 +45,7 @@ public class BossController
         RangedShield = data.initialShields.ranged;
         MagicShield = data.initialShields.magic;
         AttackBonusDamage = 0;
+        PoisonTokens = 0;
         PlannedAttacks.Clear();
         _firedHpThresholds.Clear();
         _firedTimeRounds.Clear();
@@ -122,6 +125,17 @@ public class BossController
         return null;
     }
 
+    // Cleanse removes the status effect of the boss attack against the given hero.
+    public void RemovePlayerAttackStatusEffect(Player target)
+    {
+        PlannedBossAttack attack = GetPlannedAttack(target);
+        if (attack == null)
+            return;
+
+        attack.RemoveStatusEffect();
+        OnPlayerAttackDamageChanged?.Invoke(target, attack.Damage);
+    }
+
     // Fires OnBossAttackExecuted for each planned attack (called during Attack Phase).
     public void ExecutePlannedAttacks()
     {
@@ -129,6 +143,26 @@ public class BossController
         {
             OnBossAttackExecuted?.Invoke(attack);
         }
+    }
+
+    public void AddPoisonTokens(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        PoisonTokens += amount;
+        OnPoisonTokensChanged?.Invoke(PoisonTokens);
+    }
+
+    // Called each Status phase: every poison token deals 1 damage to the boss's HP.
+    public void TickPoison()
+    {
+        if (PoisonTokens <= 0)
+            return;
+
+        CurrentHP = Mathf.Max(0, CurrentHP - PoisonTokens);
+        OnHPChanged?.Invoke(CurrentHP, MaxHP);
+        EvaluateHPTriggers();
     }
 
     public int GetShield(DamageType type)
@@ -158,6 +192,24 @@ public class BossController
     {
         if (amount <= 0)
             return;
+
+        // True damage bypasses shields entirely and hits HP directly.
+        if (type == DamageType.True)
+        {
+            CurrentHP = Mathf.Max(0, CurrentHP - amount);
+            OnHPChanged?.Invoke(CurrentHP, MaxHP);
+            EvaluateHPTriggers();
+            EvaluateReactions(amount);
+            return;
+        }
+
+        // Poison does not touch shields or HP now; it adds tokens that tick each Status phase.
+        if (type == DamageType.Poison)
+        {
+            AddPoisonTokens(amount);
+            EvaluateReactions(amount);
+            return;
+        }
 
         int shieldBefore = GetShield(type);
         int shieldDamage = Mathf.Min(amount, shieldBefore);

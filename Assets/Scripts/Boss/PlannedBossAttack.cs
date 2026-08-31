@@ -28,4 +28,10 @@ public class PlannedBossAttack
         if (Damage == 0)
             StatusEffect = StatusEffectType.None;
     }
+
+    // Cleanse removes only the additional effect; the damage stays the same.
+    public void RemoveStatusEffect()
+    {
+        StatusEffect = StatusEffectType.None;
+    }
 }
